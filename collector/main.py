@@ -1,0 +1,165 @@
+from __future__ import annotations
+
+import argparse
+import json
+from dataclasses import asdict, dataclass
+from pathlib import Path
+from typing import Callable
+
+from collector.providers import HistoricalPriceRequest, get_provider
+from collector.providers.base import PriceProvider
+from collector.supabase_repository import SupabaseConfig, SupabaseRepository
+
+
+@dataclass(frozen=True)
+class AssetCollectionConfig:
+    provider: str
+    ticker: str
+    asset_ticker: str
+    name: str
+    asset_class: str
+    interval: str = "1d"
+    start: str | None = None
+    end: str | None = None
+
+
+@dataclass(frozen=True)
+class AssetCollectionResult:
+    ticker: str
+    provider: str
+    rows_loaded: int
+
+
+DEFAULT_ASSETS = [
+    AssetCollectionConfig(
+        provider="binance",
+        ticker="BTCUSDT",
+        asset_ticker="BTCUSDT",
+        name="Bitcoin / Tether",
+        asset_class="crypto",
+        start="2020-01-01",
+    ),
+    AssetCollectionConfig(
+        provider="yfinance",
+        ticker="AAPL",
+        asset_ticker="AAPL",
+        name="Apple Inc.",
+        asset_class="stock",
+        start="2020-01-01",
+    ),
+    AssetCollectionConfig(
+        provider="yfinance",
+        ticker="SPY",
+        asset_ticker="SPY",
+        name="SPDR S&P 500 ETF Trust",
+        asset_class="etf",
+        start="2020-01-01",
+    ),
+]
+
+
+ProviderFactory = Callable[[str], PriceProvider]
+
+
+def load_asset_configs(path: str | None = None) -> list[AssetCollectionConfig]:
+    if not path:
+        return DEFAULT_ASSETS
+
+    raw = json.loads(Path(path).read_text(encoding="utf-8"))
+    if not isinstance(raw, list):
+        raise ValueError("assets file must contain a JSON array")
+
+    return [AssetCollectionConfig(**item) for item in raw]
+
+
+def apply_date_overrides(
+    assets: list[AssetCollectionConfig],
+    start: str | None = None,
+    end: str | None = None,
+) -> list[AssetCollectionConfig]:
+    return [
+        AssetCollectionConfig(
+            provider=asset.provider,
+            ticker=asset.ticker,
+            asset_ticker=asset.asset_ticker,
+            name=asset.name,
+            asset_class=asset.asset_class,
+            interval=asset.interval,
+            start=start or asset.start,
+            end=end or asset.end,
+        )
+        for asset in assets
+    ]
+
+
+def collect_asset(
+    asset: AssetCollectionConfig,
+    repository: SupabaseRepository,
+    provider_factory: ProviderFactory = get_provider,
+    batch_size: int = 500,
+) -> AssetCollectionResult:
+    provider = provider_factory(asset.provider)
+    prices = provider.fetch_prices(
+        HistoricalPriceRequest(
+            ticker=asset.ticker,
+            interval=asset.interval,
+            start=asset.start,
+            end=asset.end,
+        )
+    )
+    asset_id = repository.get_or_create_asset(
+        ticker=asset.asset_ticker,
+        name=asset.name,
+        asset_class=asset.asset_class,
+    )
+    rows_loaded = repository.upsert_prices(asset_id, prices, batch_size=batch_size)
+    return AssetCollectionResult(
+        ticker=asset.asset_ticker,
+        provider=asset.provider,
+        rows_loaded=rows_loaded,
+    )
+
+
+def run_collection(
+    assets: list[AssetCollectionConfig],
+    repository: SupabaseRepository,
+    provider_factory: ProviderFactory = get_provider,
+    batch_size: int = 500,
+) -> list[AssetCollectionResult]:
+    results = []
+    for asset in assets:
+        results.append(
+            collect_asset(
+                asset=asset,
+                repository=repository,
+                provider_factory=provider_factory,
+                batch_size=batch_size,
+            )
+        )
+    return results
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Collect configured assets into Supabase")
+    parser.add_argument("--assets-file", help="JSON file with asset collection configs")
+    parser.add_argument("--start", help="Override start date for all assets")
+    parser.add_argument("--end", help="Override end date for all assets")
+    parser.add_argument("--batch-size", type=int, default=500)
+    return parser.parse_args()
+
+
+def main() -> None:
+    args = parse_args()
+    assets = apply_date_overrides(
+        load_asset_configs(args.assets_file),
+        start=args.start,
+        end=args.end,
+    )
+    repository = SupabaseRepository(SupabaseConfig.from_env())
+    results = run_collection(assets, repository, batch_size=args.batch_size)
+
+    print(json.dumps([asdict(result) for result in results], indent=2))
+
+
+if __name__ == "__main__":
+    main()

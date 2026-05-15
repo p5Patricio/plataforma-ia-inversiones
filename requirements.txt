@@ -1,0 +1,13 @@
+fastapi
+uvicorn
+pydantic
+pydantic-settings
+yfinance
+numpy
+pandas
+scikit-learn
+joblib
+python-dotenv
+requests
+pytest
+httpx2
