@@ -27,8 +27,17 @@ class FakeSession:
         self.get_calls.append({"url": url, "headers": headers, "params": params, "timeout": timeout})
         return self.get_responses.pop(0)
 
-    def post(self, url: str, headers: dict, json: list | dict, timeout: int) -> FakeResponse:
-        self.post_calls.append({"url": url, "headers": headers, "json": json, "timeout": timeout})
+    def post(
+        self,
+        url: str,
+        headers: dict,
+        json: list | dict,
+        timeout: int,
+        params: dict | None = None,
+    ) -> FakeResponse:
+        self.post_calls.append(
+            {"url": url, "headers": headers, "json": json, "params": params, "timeout": timeout}
+        )
         return self.post_responses.pop(0)
 
 
@@ -90,6 +99,7 @@ def test_upsert_prices_batches_payload() -> None:
     assert inserted == 3
     assert len(session.post_calls) == 2
     assert session.post_calls[0]["headers"]["Prefer"] == "resolution=merge-duplicates"
+    assert session.post_calls[0]["params"] == {"on_conflict": "asset_id,timestamp"}
     assert session.post_calls[0]["json"][0]["asset_id"] == "asset-1"
     assert session.post_calls[0]["json"][0]["close"] == 11.0
     assert session.post_calls[1]["json"][0]["volume"] == 1200
@@ -133,6 +143,42 @@ def test_get_prices_returns_dataframe() -> None:
     assert prices.loc[0, "close"] == 11
     assert session.get_calls[0]["params"]["order"] == "timestamp.asc"
     assert session.get_calls[0]["params"]["limit"] == "100"
+
+
+def test_get_prices_fetches_all_pages_without_limit() -> None:
+    first_page = [
+        {
+            "timestamp": f"2024-01-{(index % 28) + 1:02d}T00:00:00+00:00",
+            "open": 10,
+            "high": 12,
+            "low": 9,
+            "close": index,
+            "volume": 1000,
+        }
+        for index in range(1000)
+    ]
+    second_page = [
+        {
+            "timestamp": "2024-02-01T00:00:00+00:00",
+            "open": 10,
+            "high": 12,
+            "low": 9,
+            "close": 1000,
+            "volume": 1000,
+        }
+    ]
+    session = FakeSession(
+        get_responses=[FakeResponse(first_page), FakeResponse(second_page)],
+        post_responses=[],
+    )
+    repository = make_repository(session)
+
+    prices = repository.get_prices("asset-1")
+
+    assert len(prices) == 1001
+    assert session.get_calls[0]["headers"]["Range"] == "0-999"
+    assert session.get_calls[1]["headers"]["Range"] == "1000-1999"
+    assert "limit" not in session.get_calls[0]["params"]
 
 
 def test_get_features_filters_by_feature_set() -> None:
@@ -210,6 +256,7 @@ def test_upsert_features_stores_json_payload() -> None:
     )
 
     assert inserted == 1
+    assert session.post_calls[0]["params"] == {"on_conflict": "asset_id,timestamp,feature_set"}
     payload = session.post_calls[0]["json"][0]
     assert payload["feature_set"] == "technical_test"
     assert payload["features"] == {"return_1d": 0.01, "rsi_14": 55.5}
@@ -235,6 +282,7 @@ def test_upsert_labels_stores_method_and_horizon() -> None:
     )
 
     assert inserted == 1
+    assert session.post_calls[0]["params"] == {"on_conflict": "asset_id,timestamp,label_method,horizon"}
     payload = session.post_calls[0]["json"][0]
     assert payload["label_method"] == "triple_barrier"
     assert payload["horizon"] == 5
@@ -327,6 +375,7 @@ def test_upsert_predictions_stores_probabilities_and_metadata() -> None:
     inserted = repository.upsert_predictions("asset-1", "run-1", predictions)
 
     assert inserted == 1
+    assert session.post_calls[0]["params"] == {"on_conflict": "asset_id,model_run_id,timestamp"}
     payload = session.post_calls[0]["json"][0]
     assert payload["asset_id"] == "asset-1"
     assert payload["model_run_id"] == "run-1"

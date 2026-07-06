@@ -144,7 +144,7 @@ def format_prediction_analysis(prediction: dict) -> dict:
     return {
         "signal": action,
         "confidence": float(confidence),
-        "reason": "Predicción versionada del modelo",
+        "reason": "Prediccion versionada del modelo",
         "reasons": reasons,
         "probabilities": probabilities,
         "model": {

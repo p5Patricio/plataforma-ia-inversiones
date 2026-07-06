@@ -109,17 +109,7 @@ class SupabaseRepository:
             "select": "timestamp,open,high,low,close,volume",
             "order": "timestamp.asc" if ascending else "timestamp.desc",
         }
-        if limit:
-            params["limit"] = str(limit)
-
-        response = self._session.get(
-            f"{self.config.url}/rest/v1/prices",
-            headers=self.headers,
-            params=params,
-            timeout=30,
-        )
-        response.raise_for_status()
-        return pd.DataFrame(response.json())
+        return pd.DataFrame(self._get_rows("prices", params, limit=limit))
 
     def get_features(
         self,
@@ -134,17 +124,7 @@ class SupabaseRepository:
             "select": "timestamp,features",
             "order": "timestamp.asc" if ascending else "timestamp.desc",
         }
-        if limit:
-            params["limit"] = str(limit)
-
-        response = self._session.get(
-            f"{self.config.url}/rest/v1/features_daily",
-            headers=self.headers,
-            params=params,
-            timeout=30,
-        )
-        response.raise_for_status()
-        return pd.DataFrame(response.json())
+        return pd.DataFrame(self._get_rows("features_daily", params, limit=limit))
 
     def get_labels(
         self,
@@ -160,17 +140,7 @@ class SupabaseRepository:
             "select": "timestamp,label,outcome_return,label_exit_timestamp",
             "order": "timestamp.asc",
         }
-        if limit:
-            params["limit"] = str(limit)
-
-        response = self._session.get(
-            f"{self.config.url}/rest/v1/labels_daily",
-            headers=self.headers,
-            params=params,
-            timeout=30,
-        )
-        response.raise_for_status()
-        return pd.DataFrame(response.json())
+        return pd.DataFrame(self._get_rows("labels_daily", params, limit=limit))
 
     def upsert_prices(self, asset_id: str, prices: pd.DataFrame, batch_size: int = 500) -> int:
         if prices.empty:
@@ -195,17 +165,12 @@ class SupabaseRepository:
                 }
             )
 
-        url = f"{self.config.url}/rest/v1/prices"
-        headers = self.headers | {
-            "Prefer": "resolution=merge-duplicates",
-        }
-        inserted = 0
-        for start in range(0, len(rows), batch_size):
-            batch = rows[start : start + batch_size]
-            response = self._session.post(url, headers=headers, json=batch, timeout=30)
-            response.raise_for_status()
-            inserted += len(batch)
-        return inserted
+        return self._post_batches(
+            "prices",
+            rows,
+            batch_size,
+            on_conflict="asset_id,timestamp",
+        )
 
     def upsert_features(
         self,
@@ -230,7 +195,12 @@ class SupabaseRepository:
             }
             for _, row in clean.iterrows()
         ]
-        return self._post_batches("features_daily", rows, batch_size)
+        return self._post_batches(
+            "features_daily",
+            rows,
+            batch_size,
+            on_conflict="asset_id,timestamp,feature_set",
+        )
 
     def upsert_labels(
         self,
@@ -262,7 +232,12 @@ class SupabaseRepository:
                     "metadata": {},
                 }
             )
-        return self._post_batches("labels_daily", rows, batch_size)
+        return self._post_batches(
+            "labels_daily",
+            rows,
+            batch_size,
+            on_conflict="asset_id,timestamp,label_method,horizon",
+        )
 
     def create_model_run(
         self,
@@ -361,7 +336,12 @@ class SupabaseRepository:
                 }
             )
 
-        return self._post_batches("predictions", rows, batch_size)
+        return self._post_batches(
+            "predictions",
+            rows,
+            batch_size,
+            on_conflict="asset_id,model_run_id,timestamp",
+        )
 
     def get_prediction_feedback(
         self,
@@ -383,17 +363,7 @@ class SupabaseRepository:
             params["asset_id"] = f"eq.{asset_id}"
         if only_evaluated:
             params["actual_label"] = "not.is.null"
-        if limit:
-            params["limit"] = str(limit)
-
-        response = self._session.get(
-            f"{self.config.url}/rest/v1/prediction_feedback",
-            headers=self.headers,
-            params=params,
-            timeout=30,
-        )
-        response.raise_for_status()
-        return pd.DataFrame(response.json())
+        return pd.DataFrame(self._get_rows("prediction_feedback", params, limit=limit))
 
     def get_latest_prediction(
         self,
@@ -485,19 +455,64 @@ class SupabaseRepository:
             )
         return self._post_batches("backtest_trades", rows, batch_size)
 
-    def _post_batches(self, table: str, rows: list[dict[str, Any]], batch_size: int) -> int:
+    def _post_batches(
+        self,
+        table: str,
+        rows: list[dict[str, Any]],
+        batch_size: int,
+        on_conflict: str | None = None,
+    ) -> int:
         if not rows:
             return 0
 
         url = f"{self.config.url}/rest/v1/{table}"
+        params = {"on_conflict": on_conflict} if on_conflict else None
         headers = self.headers | {"Prefer": "resolution=merge-duplicates"}
         inserted = 0
         for start in range(0, len(rows), batch_size):
             batch = rows[start : start + batch_size]
-            response = self._session.post(url, headers=headers, json=batch, timeout=30)
+            response = self._session.post(url, headers=headers, json=batch, params=params, timeout=30)
             response.raise_for_status()
             inserted += len(batch)
         return inserted
+
+    def _get_rows(
+        self,
+        table: str,
+        params: dict[str, str],
+        limit: int | None = None,
+        page_size: int = 1000,
+    ) -> list[dict[str, Any]]:
+        if limit is not None and limit <= page_size:
+            response = self._session.get(
+                f"{self.config.url}/rest/v1/{table}",
+                headers=self.headers,
+                params=params | {"limit": str(limit)},
+                timeout=30,
+            )
+            response.raise_for_status()
+            return response.json()
+
+        rows: list[dict[str, Any]] = []
+        offset = 0
+        while True:
+            remaining = None if limit is None else limit - len(rows)
+            if remaining is not None and remaining <= 0:
+                break
+            current_page_size = min(page_size, remaining) if remaining is not None else page_size
+            response = self._session.get(
+                f"{self.config.url}/rest/v1/{table}",
+                headers=self.headers | {"Range": f"{offset}-{offset + current_page_size - 1}"},
+                params=params,
+                timeout=30,
+            )
+            response.raise_for_status()
+            batch = response.json()
+            rows.extend(batch)
+            if len(batch) < current_page_size:
+                break
+            offset += current_page_size
+        return rows
 
 
 def _json_value(value: Any) -> Any:

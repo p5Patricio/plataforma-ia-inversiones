@@ -67,8 +67,10 @@ cp .env.example .env
 
 ```env
 SUPABASE_URL=https://tu-proyecto.supabase.co
-SUPABASE_KEY=tu-service-role-o-anon-key
+SUPABASE_KEY=tu-clave-server-side-local
 ```
+
+`SUPABASE_KEY` se usa solo en backend, ingestion, entrenamiento e inferencia. No debe exponerse en el frontend ni subirse al repositorio; para ambientes con RLS activado usa una clave server-side creada para el pipeline.
 
 3. Instala dependencias:
 
@@ -141,7 +143,8 @@ Si falla DNS o red, la API activa el modo demo local para que el dashboard siga 
 
 - No publiques `.env`.
 - Usa `.env.example` para documentar variables.
-- Revisa que las llaves de Supabase no queden en commits.
+- Usa claves server-side solo en procesos privados de backend/pipeline, nunca en el frontend.
+- Revisa que las credenciales de Supabase no queden en commits.
 - Rota cualquier credencial que haya sido expuesta previamente.
 
 ## Roadmap
