@@ -21,9 +21,6 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DEMO_FALLBACK_ACTIVE = False
-
-
 def get_repository() -> SupabaseRepository | None:
     try:
         return SupabaseRepository(SupabaseConfig.from_env())
@@ -39,19 +36,17 @@ def read_root():
 @app.get("/api/assets")
 def get_assets(repository: SupabaseRepository | None = Depends(get_repository)):
     if repository is None:
-        activate_demo_fallback()
         return demo_assets()
 
     try:
         return repository.get_assets()
     except (RuntimeError, RequestException):
-        activate_demo_fallback()
         return demo_assets()
 
 
 @app.get("/api/prices/{ticker}")
 def get_prices(ticker: str, limit: int = 100, repository: SupabaseRepository | None = Depends(get_repository)):
-    if repository is None or (DEMO_FALLBACK_ACTIVE and is_demo_ticker(ticker)):
+    if repository is None:
         if not is_demo_ticker(ticker):
             raise HTTPException(status_code=404, detail="Activo no encontrado") from None
         return demo_prices(ticker, limit=limit)
@@ -76,7 +71,7 @@ def analyze_ticker(
     model_version: str | None = Query(default=None),
     repository: SupabaseRepository | None = Depends(get_repository),
 ):
-    if repository is None or (DEMO_FALLBACK_ACTIVE and is_demo_ticker(ticker)):
+    if repository is None:
         if not is_demo_ticker(ticker):
             raise HTTPException(status_code=404, detail="Activo no encontrado") from None
         prices = demo_prices(ticker, limit=100)
@@ -89,11 +84,15 @@ def analyze_ticker(
 
     try:
         asset_id = repository.get_asset_id(ticker)
-        prediction = repository.get_latest_prediction(
-            asset_id=asset_id,
-            model_name=model_name,
-            model_version=model_version,
-        )
+        try:
+            prediction = repository.get_latest_prediction(
+                asset_id=asset_id,
+                model_name=model_name,
+                model_version=model_version,
+            )
+        except (RuntimeError, RequestException):
+            prediction = None
+
         if prediction:
             return {
                 "ticker": ticker.upper(),
@@ -189,11 +188,6 @@ def demo_assets() -> list[dict]:
 
 def is_demo_ticker(ticker: str) -> bool:
     return ticker.upper() in {asset["ticker"] for asset in demo_assets()}
-
-
-def activate_demo_fallback() -> None:
-    global DEMO_FALLBACK_ACTIVE
-    DEMO_FALLBACK_ACTIVE = True
 
 
 def demo_prices(ticker: str, limit: int = 100) -> list[dict]:

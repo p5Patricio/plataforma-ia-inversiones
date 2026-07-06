@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 from fastapi.testclient import TestClient
+from requests import RequestException
 
 from api.main import app, get_repository
 
@@ -30,6 +31,16 @@ class FakeRepository:
         model_version: str | None = None,
     ) -> dict | None:
         return self.prediction
+
+
+class PredictionUnavailableRepository(FakeRepository):
+    def get_latest_prediction(
+        self,
+        asset_id: str,
+        model_name: str | None = None,
+        model_version: str | None = None,
+    ) -> dict | None:
+        raise RequestException("prediction feedback unavailable")
 
 
 def make_prices(rows: int = 120) -> pd.DataFrame:
@@ -105,6 +116,19 @@ def test_analysis_endpoint_prefers_latest_prediction() -> None:
 
 def test_analysis_endpoint_falls_back_to_indicator_logic() -> None:
     override_repository(FakeRepository(prediction=None))
+    client = TestClient(app)
+
+    response = client.get("/api/analysis/AAPL")
+
+    clear_overrides()
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["source"] == "fallback_indicators"
+    assert payload["analysis"]["signal"] in {"BUY", "SELL", "HOLD"}
+
+
+def test_analysis_endpoint_uses_real_prices_when_prediction_feedback_is_unavailable() -> None:
+    override_repository(PredictionUnavailableRepository())
     client = TestClient(app)
 
     response = client.get("/api/analysis/AAPL")
