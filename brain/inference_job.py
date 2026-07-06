@@ -1,0 +1,139 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
+
+import joblib
+
+from brain.features import feature_columns_for_set
+from brain.promotion import generate_latest_prediction
+from brain.risk import RiskPolicy
+from collector.supabase_repository import SupabaseRepository
+
+
+PROMOTION_SOURCE = "candidate_matrix_promotion"
+
+
+def load_promoted_model_runs(
+    repository: SupabaseRepository,
+    model_name: str | None = None,
+    model_version: str | None = None,
+    limit: int | None = None,
+    include_unpromoted: bool = False,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    model_runs = repository.get_model_runs(
+        model_name=model_name,
+        model_version=model_version,
+        limit=limit,
+        ascending=False,
+    )
+    selected = []
+    skipped = []
+    for model_run in model_runs:
+        if include_unpromoted or is_promoted_model_run(model_run):
+            selected.append(model_run)
+        else:
+            skipped.append(
+                {
+                    "model_run_id": model_run.get("id"),
+                    "model_name": model_run.get("model_name"),
+                    "model_version": model_run.get("model_version"),
+                    "reason": "not_promoted",
+                }
+            )
+    return selected, skipped
+
+
+def run_latest_inference_job(
+    repository: SupabaseRepository,
+    model_runs: list[dict[str, Any]],
+    latest_feature_limit: int = 1,
+    min_confidence: float | None = None,
+    risk_policy: RiskPolicy | None = None,
+    batch_size: int = 500,
+    continue_on_error: bool = True,
+) -> dict[str, Any]:
+    started_at = datetime.now(tz=UTC)
+    results = []
+    errors = []
+
+    for model_run in model_runs:
+        context = {
+            "model_run_id": model_run.get("id"),
+            "model_name": model_run.get("model_name"),
+            "model_version": model_run.get("model_version"),
+        }
+        try:
+            ticker = target_ticker_for_model_run(model_run)
+            artifact_uri = model_run.get("artifact_uri")
+            if not artifact_uri:
+                raise ValueError("model_run_missing_artifact_uri")
+            artifact_path = Path(artifact_uri)
+            if not artifact_path.exists():
+                raise ValueError(f"artifact_not_found:{artifact_path}")
+
+            model = joblib.load(artifact_path)
+            feature_columns = feature_columns_for_set(model_run["feature_set"])
+            prediction = generate_latest_prediction(
+                repository=repository,
+                ticker=ticker,
+                model=model,
+                model_run_id=model_run["id"],
+                feature_set=model_run["feature_set"],
+                feature_columns=feature_columns,
+                min_confidence=min_confidence
+                if min_confidence is not None
+                else min_confidence_for_model_run(model_run),
+                latest_feature_limit=latest_feature_limit,
+                risk_policy=risk_policy,
+                batch_size=batch_size,
+            )
+            results.append(
+                {
+                    **context,
+                    "ticker": ticker,
+                    "predictions_loaded": prediction["predictions_loaded"],
+                    "latest_prediction": prediction["predictions"][0] if prediction["predictions"] else None,
+                }
+            )
+        except Exception as error:
+            errors.append({**context, "error": str(error)})
+            if not continue_on_error:
+                raise
+
+    ended_at = datetime.now(tz=UTC)
+    return {
+        "started_at": started_at.isoformat(),
+        "ended_at": ended_at.isoformat(),
+        "attempted": len(model_runs),
+        "succeeded": len(results),
+        "failed": len(errors),
+        "results": results,
+        "errors": errors,
+    }
+
+
+def is_promoted_model_run(model_run: dict[str, Any]) -> bool:
+    params = model_run.get("params") or {}
+    return params.get("source") == PROMOTION_SOURCE and bool(target_ticker_for_model_run(model_run, required=False))
+
+
+def target_ticker_for_model_run(model_run: dict[str, Any], required: bool = True) -> str | None:
+    params = model_run.get("params") or {}
+    metrics = model_run.get("metrics") or {}
+    candidate = (metrics.get("promotion") or {}).get("candidate") or {}
+    ticker = params.get("target_ticker") or candidate.get("target_ticker")
+    if ticker:
+        return str(ticker).upper()
+    if required:
+        raise ValueError("model_run_missing_target_ticker")
+    return None
+
+
+def min_confidence_for_model_run(model_run: dict[str, Any], default: float = 0.55) -> float:
+    params = model_run.get("params") or {}
+    metrics = model_run.get("metrics") or {}
+    candidate = (metrics.get("promotion") or {}).get("candidate") or {}
+    value = params.get("min_confidence", candidate.get("min_confidence", default))
+    return float(value)

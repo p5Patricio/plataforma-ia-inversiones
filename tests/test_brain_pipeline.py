@@ -10,6 +10,13 @@ from brain.datasets import build_dataset_from_materialized, build_supervised_dat
 from brain.feedback import analyze_prediction_feedback
 from brain.features import FEATURE_COLUMNS, FEATURE_COLUMNS_TECHNICAL_V2, build_features, feature_columns_for_set
 from brain.inference import PredictionPolicy, predict_actions
+from brain.inference_job import (
+    is_promoted_model_run,
+    load_promoted_model_runs,
+    min_confidence_for_model_run,
+    run_latest_inference_job,
+    target_ticker_for_model_run,
+)
 from brain.labeling import BUY, HOLD, SELL, fixed_horizon_labels, triple_barrier_labels
 from brain.models import available_model_names, create_model, walk_forward_evaluate
 from brain.promotion import build_promoted_training_frame, select_candidate
@@ -536,6 +543,82 @@ def test_run_candidate_matrix_compares_scopes_and_thresholds() -> None:
     assert {row["scope"] for row in matrix["ranking"]} == {"local", "global"}
     assert {row["min_confidence"] for row in matrix["ranking"]} == {0.55, 0.65}
     assert all(row["candidate_id"].startswith("BTC-USD::logistic_regression") for row in matrix["ranking"])
+
+
+class FakeModelRunRepository:
+    def __init__(self, model_runs: list[dict]) -> None:
+        self.model_runs = model_runs
+
+    def get_model_runs(self, **kwargs):
+        self.kwargs = kwargs
+        return self.model_runs
+
+
+def test_load_promoted_model_runs_filters_unpromoted_runs() -> None:
+    promoted = {
+        "id": "run-1",
+        "model_name": "extra_trees",
+        "model_version": "v1",
+        "params": {"source": "candidate_matrix_promotion", "target_ticker": "BTC-USD", "min_confidence": 0.65},
+    }
+    unpromoted = {
+        "id": "run-2",
+        "model_name": "random_forest",
+        "model_version": "v1",
+        "params": {"source": "manual"},
+    }
+    repository = FakeModelRunRepository([promoted, unpromoted])
+
+    selected, skipped = load_promoted_model_runs(repository, limit=10)
+
+    assert selected == [promoted]
+    assert skipped[0]["reason"] == "not_promoted"
+    assert repository.kwargs["limit"] == 10
+    assert is_promoted_model_run(promoted)
+    assert target_ticker_for_model_run(promoted) == "BTC-USD"
+    assert min_confidence_for_model_run(promoted) == 0.65
+
+
+def test_run_latest_inference_job_records_success_and_errors(monkeypatch, tmp_path) -> None:
+    good_artifact = tmp_path / "good.joblib"
+    good_artifact.write_text("placeholder", encoding="utf-8")
+    model_runs = [
+        {
+            "id": "run-1",
+            "model_name": "extra_trees",
+            "model_version": "v1",
+            "feature_set": "technical_v2",
+            "artifact_uri": str(good_artifact),
+            "params": {"source": "candidate_matrix_promotion", "target_ticker": "BTC-USD", "min_confidence": 0.65},
+        },
+        {
+            "id": "run-2",
+            "model_name": "extra_trees",
+            "model_version": "v2",
+            "feature_set": "technical_v2",
+            "artifact_uri": str(tmp_path / "missing.joblib"),
+            "params": {"source": "candidate_matrix_promotion", "target_ticker": "ETH-USD"},
+        },
+    ]
+
+    monkeypatch.setattr("brain.inference_job.joblib.load", lambda path: object())
+
+    def fake_generate_latest_prediction(**kwargs):
+        return {
+            "predictions_loaded": 1,
+            "predictions": [{"action": "HOLD", "confidence": kwargs["min_confidence"]}],
+        }
+
+    monkeypatch.setattr("brain.inference_job.generate_latest_prediction", fake_generate_latest_prediction)
+
+    result = run_latest_inference_job(object(), model_runs)
+
+    assert result["attempted"] == 2
+    assert result["succeeded"] == 1
+    assert result["failed"] == 1
+    assert result["results"][0]["ticker"] == "BTC-USD"
+    assert result["results"][0]["latest_prediction"]["confidence"] == 0.65
+    assert "artifact_not_found" in result["errors"][0]["error"]
 
 
 def test_select_candidate_uses_top_promotable_rank() -> None:

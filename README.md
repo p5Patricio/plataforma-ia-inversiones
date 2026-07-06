@@ -142,6 +142,29 @@ Si falla DNS o red, la API activa el modo demo local para que el dashboard siga 
 7. Evaluar feedback de predicciones previas.
 8. Servir la decision en la API con riesgo y trazabilidad.
 
+## Jobs Operativos
+
+Para generar predicciones latest desde los modelos promovidos:
+
+```bash
+python -m brain.run_inference_job --out reports/inference_job_latest.json
+```
+
+El job:
+
+- busca `model_runs` creados por promocion de candidatos;
+- identifica su `target_ticker`;
+- carga el artefacto `.joblib`;
+- genera la prediccion mas reciente desde features materializadas;
+- aplica reglas de riesgo;
+- guarda la prediccion en Supabase.
+
+Puede filtrarse por version:
+
+```bash
+python -m brain.run_inference_job --model-name extra_trees --model-version promoted_smoke_20260706
+```
+
 ## Seguridad Para Repos Publicos
 
 - No publiques `.env`.
@@ -152,6 +175,6 @@ Si falla DNS o red, la API activa el modo demo local para que el dashboard siga 
 
 ## Roadmap
 
-- Integrar jobs programados de ingestion e inferencia.
+- Automatizar ingestion/materializacion con scheduler externo.
 - Separar modo demo, staging y produccion por configuracion.
 - Agregar autenticacion y perfiles de riesgo por usuario.

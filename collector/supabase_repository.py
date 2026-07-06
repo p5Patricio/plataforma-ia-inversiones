@@ -308,6 +308,23 @@ class SupabaseRepository:
             raise ValueError(f"Model run not found: {model_name}:{model_version}")
         return data[0]
 
+    def get_model_runs(
+        self,
+        model_name: str | None = None,
+        model_version: str | None = None,
+        limit: int | None = None,
+        ascending: bool = False,
+    ) -> list[dict[str, Any]]:
+        params = {
+            "select": "*",
+            "order": "created_at.asc" if ascending else "created_at.desc",
+        }
+        if model_name:
+            params["model_name"] = f"eq.{model_name}"
+        if model_version:
+            params["model_version"] = f"eq.{model_version}"
+        return self._get_rows("model_runs", params, limit=limit)
+
     def upsert_predictions(
         self,
         asset_id: str,

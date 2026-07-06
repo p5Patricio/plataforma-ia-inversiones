@@ -357,6 +357,20 @@ def test_get_model_run_returns_matching_run() -> None:
     assert session.get_calls[0]["params"]["select"] == "*"
 
 
+def test_get_model_runs_filters_and_orders_descending() -> None:
+    session = FakeSession(get_responses=[FakeResponse([{"id": "run-1"}])], post_responses=[])
+    repository = make_repository(session)
+
+    runs = repository.get_model_runs(model_name="extra_trees", model_version="v1", limit=10)
+
+    assert runs == [{"id": "run-1"}]
+    params = session.get_calls[0]["params"]
+    assert params["model_name"] == "eq.extra_trees"
+    assert params["model_version"] == "eq.v1"
+    assert params["order"] == "created_at.desc"
+    assert params["limit"] == "10"
+
+
 def test_upsert_predictions_stores_probabilities_and_metadata() -> None:
     session = FakeSession(get_responses=[], post_responses=[FakeResponse()])
     repository = make_repository(session)
