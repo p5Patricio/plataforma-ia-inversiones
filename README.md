@@ -117,6 +117,14 @@ Conexion con Supabase:
 python -c "from collector.supabase_repository import SupabaseConfig, SupabaseRepository; r=SupabaseRepository(SupabaseConfig.from_env()); print(len(r.get_assets()))"
 ```
 
+Esquema ML en Supabase:
+
+```bash
+python -m collector.schema_check
+```
+
+Si falta alguna relacion, aplica `supabase/migrations/20260705000100_ml_pipeline_tables.sql` desde el SQL Editor de Supabase y vuelve a ejecutar el chequeo.
+
 Si falla DNS o red, la API activa el modo demo local para que el dashboard siga siendo navegable.
 
 ## Flujo de Trabajo del Modelo

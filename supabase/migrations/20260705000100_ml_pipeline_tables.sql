@@ -1,5 +1,5 @@
 -- Feature rows generated from point-in-time market data.
-create table features_daily (
+create table if not exists features_daily (
   id bigint primary key generated always as identity,
   asset_id uuid references assets(id) on delete cascade,
   timestamp timestamptz not null,
@@ -9,11 +9,11 @@ create table features_daily (
   unique(asset_id, timestamp, feature_set)
 );
 
-create index features_daily_asset_timestamp_idx
+create index if not exists features_daily_asset_timestamp_idx
   on features_daily(asset_id, timestamp);
 
 -- Supervised labels generated from future outcomes.
-create table labels_daily (
+create table if not exists labels_daily (
   id bigint primary key generated always as identity,
   asset_id uuid references assets(id) on delete cascade,
   timestamp timestamptz not null,
@@ -27,11 +27,11 @@ create table labels_daily (
   unique(asset_id, timestamp, label_method, horizon)
 );
 
-create index labels_daily_asset_timestamp_idx
+create index if not exists labels_daily_asset_timestamp_idx
   on labels_daily(asset_id, timestamp);
 
 -- Training/evaluation runs for reproducibility.
-create table model_runs (
+create table if not exists model_runs (
   id uuid primary key default gen_random_uuid(),
   model_name text not null,
   model_version text not null,
@@ -48,7 +48,7 @@ create table model_runs (
 );
 
 -- Point-in-time predictions emitted by a model version.
-create table predictions (
+create table if not exists predictions (
   id bigint primary key generated always as identity,
   asset_id uuid references assets(id) on delete cascade,
   model_run_id uuid references model_runs(id) on delete set null,
@@ -63,12 +63,12 @@ create table predictions (
   unique(asset_id, model_run_id, timestamp)
 );
 
-create index predictions_asset_timestamp_idx
+create index if not exists predictions_asset_timestamp_idx
   on predictions(asset_id, timestamp);
 
 -- Feedback view used for model monitoring and future retraining.
 -- A prediction becomes evaluable once the matching label has been materialized.
-create view prediction_feedback as
+create or replace view prediction_feedback as
 select
   p.id as prediction_id,
   p.asset_id,
@@ -101,7 +101,7 @@ left join labels_daily l
  and l.horizon = mr.horizon;
 
 -- Backtest summaries for evaluated prediction streams.
-create table backtests (
+create table if not exists backtests (
   id uuid primary key default gen_random_uuid(),
   model_run_id uuid references model_runs(id) on delete set null,
   asset_id uuid references assets(id) on delete cascade,
@@ -113,11 +113,11 @@ create table backtests (
   created_at timestamptz default now()
 );
 
-create index backtests_model_asset_idx
+create index if not exists backtests_model_asset_idx
   on backtests(model_run_id, asset_id);
 
 -- Simulated trades produced by a backtest.
-create table backtest_trades (
+create table if not exists backtest_trades (
   id bigint primary key generated always as identity,
   backtest_id uuid references backtests(id) on delete cascade,
   asset_id uuid references assets(id) on delete cascade,
@@ -131,11 +131,11 @@ create table backtest_trades (
   metadata jsonb default '{}'::jsonb
 );
 
-create index backtest_trades_backtest_timestamp_idx
+create index if not exists backtest_trades_backtest_timestamp_idx
   on backtest_trades(backtest_id, timestamp);
 
 -- Optional risk policies that can be applied globally or per asset.
-create table risk_limits (
+create table if not exists risk_limits (
   id bigint primary key generated always as identity,
   asset_id uuid references assets(id) on delete cascade,
   name text not null,

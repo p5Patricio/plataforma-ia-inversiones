@@ -10,4 +10,4 @@ joblib
 python-dotenv
 requests
 pytest
-httpx2
+httpx
