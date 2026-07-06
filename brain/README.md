@@ -70,6 +70,23 @@ Este comando:
 
 Las predicciones quedan preparadas para evaluarse contra labels futuros mediante la vista `prediction_feedback`. Ese feedback debe usarse en reentrenamientos o meta-modelos; no se debe tratar una prediccion pasada como verdad hasta que exista su resultado real.
 
+## Evaluacion walk-forward con backtest
+
+Antes de promover un modelo, ejecuta una evaluacion out-of-sample desde Supabase:
+
+```powershell
+python -m brain.evaluate_from_supabase --ticker BTC-USD --feature-set technical_v1 --label-method triple_barrier --horizon 5 --out reports/btc_walk_forward_backtest.json
+```
+
+Este comando:
+
+1. reconstruye el dataset materializado;
+2. entrena solo con datos pasados en cada fold;
+3. predice el tramo futuro de ese fold;
+4. aplica embargo y evalua una operacion cada `horizon` filas por defecto para reducir solapamiento;
+5. calcula retorno neto, drawdown, win rate y profit factor despues de costos;
+6. compara contra baselines `no_trade`, `always_buy` y `always_sell`.
+
 ### Risk engine
 
 El comando de prediccion tambien aplica reglas de riesgo:

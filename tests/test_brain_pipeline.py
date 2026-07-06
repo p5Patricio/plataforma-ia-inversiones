@@ -4,6 +4,7 @@ import numpy as np
 import pandas as pd
 
 from brain.backtesting import BacktestConfig, run_prediction_backtest
+from brain.backtesting import run_walk_forward_model_backtest
 from brain.datasets import build_dataset_from_materialized, build_supervised_dataset
 from brain.feedback import analyze_prediction_feedback
 from brain.features import FEATURE_COLUMNS, build_features
@@ -213,6 +214,47 @@ def test_run_prediction_backtest_handles_empty_feedback() -> None:
     assert result.metrics["final_equity"] == 5000
     assert result.metrics["trade_count"] == 0
     assert result.trades.empty
+
+
+def test_run_walk_forward_model_backtest_compares_baselines() -> None:
+    dataset = build_supervised_dataset(
+        make_prices(180),
+        label_method="triple_barrier",
+        horizon=3,
+        profit_take=0.01,
+        stop_loss=0.01,
+    )
+
+    result = run_walk_forward_model_backtest(
+        dataset,
+        n_splits=3,
+        config=BacktestConfig(initial_capital=1000, fee_bps=5, slippage_bps=5),
+    )
+
+    assert result.summary["evaluated_rows"] == len(result.predictions)
+    assert result.summary["embargo_rows"] == 0
+    assert result.summary["trade_stride"] == 1
+    assert len(result.folds) == 3
+    assert "model" in result.summary
+    assert {"no_trade", "always_buy", "always_sell"}.issubset(result.baselines)
+    assert result.model_backtest.metrics["trade_count"] == len(result.predictions)
+    assert result.baselines["no_trade"].metrics["final_equity"] == 1000
+
+
+def test_run_walk_forward_model_backtest_supports_embargo_and_trade_stride() -> None:
+    dataset = build_supervised_dataset(
+        make_prices(180),
+        label_method="triple_barrier",
+        horizon=3,
+        profit_take=0.01,
+        stop_loss=0.01,
+    )
+
+    result = run_walk_forward_model_backtest(dataset, n_splits=3, embargo_rows=3, trade_stride=3)
+
+    assert result.summary["embargo_rows"] == 3
+    assert result.summary["trade_stride"] == 3
+    assert result.summary["evaluated_rows"] < len(dataset)
 
 
 def test_apply_risk_policy_sizes_confident_trade() -> None:

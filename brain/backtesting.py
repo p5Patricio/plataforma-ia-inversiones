@@ -4,6 +4,11 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+from sklearn.model_selection import TimeSeriesSplit
+
+from brain.features import FEATURE_COLUMNS
+from brain.inference import PredictionPolicy, predict_actions
+from brain.models import create_baseline_model
 
 
 TRADE_ACTIONS = {"BUY", "SELL"}
@@ -26,6 +31,15 @@ class BacktestConfig:
 class BacktestResult:
     metrics: dict
     trades: pd.DataFrame
+
+
+@dataclass(frozen=True)
+class WalkForwardBacktestResult:
+    summary: dict
+    folds: list[dict]
+    predictions: pd.DataFrame
+    model_backtest: BacktestResult
+    baselines: dict[str, BacktestResult]
 
 
 def run_prediction_backtest(feedback: pd.DataFrame, config: BacktestConfig | None = None) -> BacktestResult:
@@ -74,12 +88,127 @@ def run_prediction_backtest(feedback: pd.DataFrame, config: BacktestConfig | Non
     return BacktestResult(metrics=_metrics_from_trades(trades, config), trades=trades)
 
 
+def run_walk_forward_model_backtest(
+    dataset: pd.DataFrame,
+    n_splits: int = 5,
+    test_size: int | None = None,
+    embargo_rows: int = 0,
+    trade_stride: int = 1,
+    prediction_policy: PredictionPolicy | None = None,
+    config: BacktestConfig | None = None,
+) -> WalkForwardBacktestResult:
+    """Train on chronological folds and backtest only out-of-sample predictions."""
+    config = config or BacktestConfig()
+    prediction_policy = prediction_policy or PredictionPolicy()
+    _validate_walk_forward_dataset(dataset)
+
+    ordered = dataset.sort_values("timestamp").reset_index(drop=True)
+    if len(ordered) < max(30, n_splits + 2):
+        raise ValueError("Not enough rows for walk-forward backtest")
+    if embargo_rows < 0:
+        raise ValueError("embargo_rows must be non-negative")
+    if trade_stride < 1:
+        raise ValueError("trade_stride must be at least 1")
+
+    splitter = TimeSeriesSplit(n_splits=n_splits, test_size=test_size, gap=embargo_rows)
+    fold_summaries = []
+    prediction_frames = []
+
+    for fold, (train_idx, test_idx) in enumerate(splitter.split(ordered), start=1):
+        train = ordered.iloc[train_idx]
+        test = ordered.iloc[test_idx].copy()
+        model = create_baseline_model()
+        model.fit(train[FEATURE_COLUMNS], train["label"])
+
+        predicted = predict_actions(
+            model,
+            test[["timestamp", *FEATURE_COLUMNS]],
+            policy=prediction_policy,
+        )
+        feedback = _prediction_feedback_frame(predicted, test)
+        if trade_stride > 1:
+            feedback = feedback.iloc[::trade_stride].reset_index(drop=True)
+        feedback["fold"] = fold
+        prediction_frames.append(feedback)
+
+        fold_backtest = run_prediction_backtest(feedback, config)
+        fold_summaries.append(
+            {
+                "fold": fold,
+                "train_rows": int(len(train)),
+                "test_rows": int(len(test)),
+                "test_start": _timestamp_or_none(test["timestamp"].min()),
+                "test_end": _timestamp_or_none(test["timestamp"].max()),
+                "model_total_return": fold_backtest.metrics["total_return"],
+                "model_max_drawdown": fold_backtest.metrics["max_drawdown"],
+                "model_active_trade_count": fold_backtest.metrics["active_trade_count"],
+                "model_win_rate": fold_backtest.metrics["win_rate"],
+            }
+        )
+
+    predictions = pd.concat(prediction_frames, ignore_index=True) if prediction_frames else pd.DataFrame()
+    model_backtest = run_prediction_backtest(predictions, config)
+    baselines = {
+        "no_trade": run_prediction_backtest(_baseline_feedback(predictions, "HOLD"), config),
+        "always_buy": run_prediction_backtest(_baseline_feedback(predictions, "BUY"), config),
+    }
+    if config.allow_short:
+        baselines["always_sell"] = run_prediction_backtest(_baseline_feedback(predictions, "SELL"), config)
+
+    summary = {
+        "rows": int(len(ordered)),
+        "evaluated_rows": int(len(predictions)),
+        "n_splits": int(n_splits),
+        "test_size": test_size,
+        "embargo_rows": int(embargo_rows),
+        "trade_stride": int(trade_stride),
+        "min_confidence": prediction_policy.min_confidence,
+        "model": model_backtest.metrics,
+        "baselines": {name: result.metrics for name, result in baselines.items()},
+    }
+    return WalkForwardBacktestResult(
+        summary=summary,
+        folds=fold_summaries,
+        predictions=predictions,
+        model_backtest=model_backtest,
+        baselines=baselines,
+    )
+
+
 def _gross_return_for_action(action: str, outcome_return: float, config: BacktestConfig) -> float:
     if action == "BUY":
         return float(outcome_return)
     if action == "SELL" and config.allow_short:
         return float(-outcome_return)
     return 0.0
+
+
+def _prediction_feedback_frame(predictions: pd.DataFrame, labels: pd.DataFrame) -> pd.DataFrame:
+    frame = predictions.rename(columns={"action": "predicted_action"}).copy()
+    label_columns = ["timestamp", "label", "outcome_return"]
+    merged = frame.merge(labels[label_columns], on="timestamp", how="left")
+    merged = merged.rename(columns={"label": "actual_label"})
+    merged["is_correct"] = merged["predicted_action"] == merged["actual_label"]
+    return merged
+
+
+def _baseline_feedback(predictions: pd.DataFrame, action: str) -> pd.DataFrame:
+    if predictions.empty:
+        return predictions.copy()
+    baseline = predictions.copy()
+    baseline["predicted_action"] = action
+    baseline["confidence"] = 1.0
+    baseline["is_correct"] = baseline["predicted_action"] == baseline["actual_label"]
+    return baseline
+
+
+def _validate_walk_forward_dataset(dataset: pd.DataFrame) -> None:
+    required = {"timestamp", "label", "outcome_return", *FEATURE_COLUMNS}
+    missing = required - set(dataset.columns)
+    if missing:
+        raise ValueError(f"dataset missing columns: {sorted(missing)}")
+    if dataset["outcome_return"].isna().all():
+        raise ValueError("dataset has no outcome_return values to backtest")
 
 
 def _metrics_from_trades(trades: pd.DataFrame, config: BacktestConfig) -> dict:
@@ -144,3 +273,9 @@ def _nullable_float(value) -> float | None:
     if pd.isna(value):
         return None
     return float(value)
+
+
+def _timestamp_or_none(value) -> str | None:
+    if value is None or pd.isna(value):
+        return None
+    return pd.Timestamp(value).isoformat()
