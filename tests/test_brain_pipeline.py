@@ -12,6 +12,7 @@ from brain.inference import PredictionPolicy, predict_actions
 from brain.labeling import BUY, HOLD, SELL, fixed_horizon_labels, triple_barrier_labels
 from brain.models import available_model_names, create_model, walk_forward_evaluate
 from brain.risk import RiskPolicy, apply_risk_policy
+from brain.scoped_evaluation import AssetDataset, run_scoped_walk_forward_backtest
 
 
 def make_prices(rows: int = 120) -> pd.DataFrame:
@@ -330,6 +331,77 @@ def test_run_confidence_threshold_sweep_sorts_by_return() -> None:
         row["min_confidence"] for row in sorted(rows, key=lambda item: item["total_return"], reverse=True)
     ]
     assert {"total_return", "max_drawdown", "active_trade_count"}.issubset(rows[0])
+
+
+def test_run_scoped_walk_forward_backtest_compares_training_scopes() -> None:
+    target = AssetDataset(
+        asset_id="btc-id",
+        ticker="BTC-USD",
+        asset_class="crypto",
+        dataset=build_supervised_dataset(
+            make_prices(180),
+            label_method="triple_barrier",
+            horizon=3,
+            profit_take=0.01,
+            stop_loss=0.01,
+        ).assign(asset_id="btc-id", ticker="BTC-USD", asset_class="crypto"),
+    )
+    peer_crypto = AssetDataset(
+        asset_id="eth-id",
+        ticker="ETH-USD",
+        asset_class="crypto",
+        dataset=build_supervised_dataset(
+            make_prices(180).assign(close=lambda frame: frame["close"] * 0.8),
+            label_method="triple_barrier",
+            horizon=3,
+            profit_take=0.01,
+            stop_loss=0.01,
+        ).assign(asset_id="eth-id", ticker="ETH-USD", asset_class="crypto"),
+    )
+    stock = AssetDataset(
+        asset_id="aapl-id",
+        ticker="AAPL",
+        asset_class="stock",
+        dataset=build_supervised_dataset(
+            make_prices(180).assign(close=lambda frame: frame["close"] * 1.2),
+            label_method="triple_barrier",
+            horizon=3,
+            profit_take=0.01,
+            stop_loss=0.01,
+        ).assign(asset_id="aapl-id", ticker="AAPL", asset_class="stock"),
+    )
+
+    local = run_scoped_walk_forward_backtest(
+        [target, peer_crypto, stock],
+        target_ticker="BTC-USD",
+        scope="local",
+        n_splits=3,
+        trade_stride=3,
+        model_name="logistic_regression",
+    )
+    asset_class = run_scoped_walk_forward_backtest(
+        [target, peer_crypto, stock],
+        target_ticker="BTC-USD",
+        scope="asset_class",
+        n_splits=3,
+        trade_stride=3,
+        model_name="logistic_regression",
+    )
+    global_result = run_scoped_walk_forward_backtest(
+        [target, peer_crypto, stock],
+        target_ticker="BTC-USD",
+        scope="global",
+        n_splits=3,
+        trade_stride=3,
+        model_name="logistic_regression",
+    )
+
+    assert local.summary["participating_asset_count"] == 1
+    assert asset_class.summary["participating_asset_count"] == 2
+    assert global_result.summary["participating_asset_count"] == 3
+    assert asset_class.folds[0]["train_rows"] > asset_class.folds[0]["target_train_rows"]
+    assert global_result.summary["evaluated_rows"] == local.summary["evaluated_rows"]
+    assert set(global_result.predictions["scope"]) == {"global"}
 
 
 def test_apply_risk_policy_sizes_confident_trade() -> None:

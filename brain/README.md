@@ -100,6 +100,22 @@ Este comando:
 6. compara contra baselines `no_trade`, `always_buy` y `always_sell`.
 7. opcionalmente ordena los resultados de `--confidence-sweep` por retorno total para encontrar umbrales candidatos.
 
+## Comparar scopes de entrenamiento
+
+Para validar si conviene entrenar por activo, por clase de activo o globalmente:
+
+```powershell
+python -m brain.evaluate_training_scopes_from_supabase --ticker BTC-USD --feature-set technical_v2 --label-method triple_barrier --horizon 5 --model-name extra_trees --min-confidence 0.65 --out reports/btc_training_scopes.json
+```
+
+Este comando evalua siempre el activo objetivo, pero cambia los datos usados para entrenar cada fold:
+
+- `local`: solo el activo objetivo.
+- `asset_class`: activos de la misma clase, por ejemplo crypto.
+- `global`: todos los activos con datasets materializados.
+
+La comparacion ayuda a decidir si un modelo individual, por clase o global aporta mejor retorno ajustado por riesgo.
+
 ### Risk engine
 
 El comando de prediccion tambien aplica reglas de riesgo:
