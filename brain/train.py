@@ -8,6 +8,7 @@ import joblib
 import pandas as pd
 
 from brain.datasets import build_supervised_dataset
+from brain.features import feature_columns_for_set
 from brain.models import (
     DEFAULT_MODEL_NAME,
     available_model_names,
@@ -23,6 +24,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--model-out", required=True, help="Path where the trained model will be saved")
     parser.add_argument("--metrics-out", help="Optional JSON path for walk-forward metrics")
     parser.add_argument("--label-method", choices=["fixed_horizon", "triple_barrier"], default="triple_barrier")
+    parser.add_argument("--feature-set", default="technical_v1")
     parser.add_argument("--horizon", type=int, default=5)
     parser.add_argument("--profit-take", type=float, default=0.03)
     parser.add_argument("--stop-loss", type=float, default=0.015)
@@ -44,10 +46,17 @@ def main() -> None:
         stop_loss=args.stop_loss,
         buy_threshold=args.buy_threshold,
         sell_threshold=args.sell_threshold,
+        feature_set=args.feature_set,
     )
+    feature_columns = feature_columns_for_set(args.feature_set)
 
-    evaluation = walk_forward_evaluate(dataset, n_splits=args.splits, model_name=args.model_name)
-    model = train_final_model(dataset, model_name=args.model_name)
+    evaluation = walk_forward_evaluate(
+        dataset,
+        n_splits=args.splits,
+        model_name=args.model_name,
+        feature_columns=feature_columns,
+    )
+    model = train_final_model(dataset, model_name=args.model_name, feature_columns=feature_columns)
     model_spec = get_model_spec(args.model_name)
 
     model_out = Path(args.model_out)
@@ -57,6 +66,7 @@ def main() -> None:
     metrics = {
         "model_name": args.model_name,
         "estimator": model_spec.estimator,
+        "feature_set": args.feature_set,
         "label_method": args.label_method,
         "horizon": args.horizon,
         "summary": evaluation.summary,

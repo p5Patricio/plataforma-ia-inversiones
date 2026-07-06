@@ -4,10 +4,10 @@ import numpy as np
 import pandas as pd
 
 from brain.backtesting import BacktestConfig, run_prediction_backtest
-from brain.backtesting import run_walk_forward_model_backtest
+from brain.backtesting import run_confidence_threshold_sweep, run_walk_forward_model_backtest
 from brain.datasets import build_dataset_from_materialized, build_supervised_dataset
 from brain.feedback import analyze_prediction_feedback
-from brain.features import FEATURE_COLUMNS, build_features
+from brain.features import FEATURE_COLUMNS, FEATURE_COLUMNS_TECHNICAL_V2, build_features, feature_columns_for_set
 from brain.inference import PredictionPolicy, predict_actions
 from brain.labeling import BUY, HOLD, SELL, fixed_horizon_labels, triple_barrier_labels
 from brain.models import available_model_names, create_model, walk_forward_evaluate
@@ -44,6 +44,19 @@ def test_features_do_not_change_when_future_price_changes() -> None:
 
     original_features = build_features(prices).loc[:78, FEATURE_COLUMNS]
     changed_features = build_features(changed).loc[:78, FEATURE_COLUMNS]
+
+    pd.testing.assert_frame_equal(original_features, changed_features)
+
+
+def test_technical_v2_features_do_not_change_when_future_price_changes() -> None:
+    prices = make_prices(100)
+    changed = prices.copy()
+    changed.loc[99, "close"] = changed.loc[99, "close"] * 10
+    changed.loc[99, "high"] = changed.loc[99, "high"] * 10
+    columns = feature_columns_for_set("technical_v2")
+
+    original_features = build_features(prices).loc[:98, columns]
+    changed_features = build_features(changed).loc[:98, columns]
 
     pd.testing.assert_frame_equal(original_features, changed_features)
 
@@ -85,6 +98,20 @@ def test_build_supervised_dataset_has_training_columns() -> None:
 
     assert set(FEATURE_COLUMNS + ["label"]).issubset(dataset.columns)
     assert dataset[FEATURE_COLUMNS + ["label"]].isna().sum().sum() == 0
+
+
+def test_build_supervised_dataset_supports_technical_v2_columns() -> None:
+    dataset = build_supervised_dataset(
+        make_prices(120),
+        label_method="fixed_horizon",
+        horizon=3,
+        buy_threshold=0.005,
+        sell_threshold=-0.005,
+        feature_set="technical_v2",
+    )
+
+    assert set(FEATURE_COLUMNS_TECHNICAL_V2 + ["label"]).issubset(dataset.columns)
+    assert dataset[FEATURE_COLUMNS_TECHNICAL_V2 + ["label"]].isna().sum().sum() == 0
 
 
 def test_walk_forward_evaluate_returns_fold_metrics() -> None:
@@ -281,6 +308,28 @@ def test_run_walk_forward_model_backtest_supports_embargo_and_trade_stride() -> 
     assert result.summary["embargo_rows"] == 3
     assert result.summary["trade_stride"] == 3
     assert result.summary["evaluated_rows"] < len(dataset)
+
+
+def test_run_confidence_threshold_sweep_sorts_by_return() -> None:
+    dataset = build_supervised_dataset(
+        make_prices(180),
+        label_method="triple_barrier",
+        horizon=3,
+        profit_take=0.01,
+        stop_loss=0.01,
+    )
+
+    rows = run_confidence_threshold_sweep(
+        dataset,
+        thresholds=[0.55, 0.70],
+        n_splits=3,
+        trade_stride=3,
+    )
+
+    assert [row["min_confidence"] for row in rows] == [
+        row["min_confidence"] for row in sorted(rows, key=lambda item: item["total_return"], reverse=True)
+    ]
+    assert {"total_return", "max_drawdown", "active_trade_count"}.issubset(rows[0])
 
 
 def test_apply_risk_policy_sizes_confident_trade() -> None:

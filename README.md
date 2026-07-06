@@ -135,7 +135,7 @@ Si falla DNS o red, la API activa el modo demo local para que el dashboard siga 
 2. Cargar precios normalizados a Supabase.
 3. Materializar features tecnicos y labels.
 4. Entrenar modelos candidatos con validacion walk-forward.
-5. Evaluar out-of-sample con backtesting y baselines.
+5. Evaluar out-of-sample con backtesting, baselines y barrido de umbrales.
 6. Guardar `model_runs`, predicciones y metadata.
 7. Evaluar feedback de predicciones previas.
 8. Servir la decision en la API con riesgo y trazabilidad.

@@ -138,12 +138,14 @@ def walk_forward_evaluate(
     n_splits: int = 5,
     test_size: int | None = None,
     model_name: str = DEFAULT_MODEL_NAME,
+    feature_columns: list[str] | None = None,
 ) -> WalkForwardResult:
     """Evaluate a classifier with chronological train/test folds."""
     if len(dataset) < max(30, n_splits + 2):
         raise ValueError("Not enough rows for walk-forward evaluation")
 
-    X, y = split_features_target(dataset)
+    columns = feature_columns or FEATURE_COLUMNS
+    X, y = split_features_target(dataset, feature_columns=columns)
     splitter = TimeSeriesSplit(n_splits=n_splits, test_size=test_size)
     fold_metrics = []
     model_spec = get_model_spec(model_name)
@@ -172,7 +174,7 @@ def walk_forward_evaluate(
         "rows": len(dataset),
         "model_name": model_name,
         "estimator": model_spec.estimator,
-        "features": FEATURE_COLUMNS,
+        "features": columns,
         "mean_accuracy": float(metrics_df["accuracy"].mean()),
         "mean_balanced_accuracy": float(metrics_df["balanced_accuracy"].mean()),
         "mean_f1_macro": float(metrics_df["f1_macro"].mean()),
@@ -180,8 +182,12 @@ def walk_forward_evaluate(
     return WalkForwardResult(fold_metrics=fold_metrics, summary=summary)
 
 
-def train_final_model(dataset: pd.DataFrame, model_name: str = DEFAULT_MODEL_NAME) -> Pipeline:
-    X, y = split_features_target(dataset)
+def train_final_model(
+    dataset: pd.DataFrame,
+    model_name: str = DEFAULT_MODEL_NAME,
+    feature_columns: list[str] | None = None,
+) -> Pipeline:
+    X, y = split_features_target(dataset, feature_columns=feature_columns)
     model = create_model(model_name)
     model.fit(X, y)
     return model

@@ -95,13 +95,15 @@ def run_walk_forward_model_backtest(
     embargo_rows: int = 0,
     trade_stride: int = 1,
     model_name: str = DEFAULT_MODEL_NAME,
+    feature_columns: list[str] | None = None,
     prediction_policy: PredictionPolicy | None = None,
     config: BacktestConfig | None = None,
 ) -> WalkForwardBacktestResult:
     """Train on chronological folds and backtest only out-of-sample predictions."""
     config = config or BacktestConfig()
     prediction_policy = prediction_policy or PredictionPolicy()
-    _validate_walk_forward_dataset(dataset)
+    columns = feature_columns or FEATURE_COLUMNS
+    _validate_walk_forward_dataset(dataset, columns)
 
     ordered = dataset.sort_values("timestamp").reset_index(drop=True)
     if len(ordered) < max(30, n_splits + 2):
@@ -119,12 +121,13 @@ def run_walk_forward_model_backtest(
         train = ordered.iloc[train_idx]
         test = ordered.iloc[test_idx].copy()
         model = create_model(model_name)
-        model.fit(train[FEATURE_COLUMNS], train["label"])
+        model.fit(train[columns], train["label"])
 
         predicted = predict_actions(
             model,
-            test[["timestamp", *FEATURE_COLUMNS]],
+            test[["timestamp", *columns]],
             policy=prediction_policy,
+            feature_columns=columns,
         )
         feedback = _prediction_feedback_frame(predicted, test)
         if trade_stride > 1:
@@ -165,6 +168,7 @@ def run_walk_forward_model_backtest(
         "trade_stride": int(trade_stride),
         "min_confidence": prediction_policy.min_confidence,
         "model_name": model_name,
+        "features": columns,
         "model": model_backtest.metrics,
         "baselines": {name: result.metrics for name, result in baselines.items()},
     }
@@ -175,6 +179,47 @@ def run_walk_forward_model_backtest(
         model_backtest=model_backtest,
         baselines=baselines,
     )
+
+
+def run_confidence_threshold_sweep(
+    dataset: pd.DataFrame,
+    thresholds: list[float],
+    n_splits: int = 5,
+    test_size: int | None = None,
+    embargo_rows: int = 0,
+    trade_stride: int = 1,
+    model_name: str = DEFAULT_MODEL_NAME,
+    feature_columns: list[str] | None = None,
+    config: BacktestConfig | None = None,
+) -> list[dict]:
+    """Evaluate the same model setup across confidence thresholds."""
+    rows = []
+    for threshold in thresholds:
+        result = run_walk_forward_model_backtest(
+            dataset,
+            n_splits=n_splits,
+            test_size=test_size,
+            embargo_rows=embargo_rows,
+            trade_stride=trade_stride,
+            model_name=model_name,
+            feature_columns=feature_columns,
+            prediction_policy=PredictionPolicy(min_confidence=threshold),
+            config=config,
+        )
+        metrics = result.model_backtest.metrics
+        rows.append(
+            {
+                "min_confidence": threshold,
+                "total_return": metrics["total_return"],
+                "final_equity": metrics["final_equity"],
+                "max_drawdown": metrics["max_drawdown"],
+                "profit_factor": metrics["profit_factor"],
+                "active_trade_count": metrics["active_trade_count"],
+                "exposure": metrics["exposure"],
+                "win_rate": metrics["win_rate"],
+            }
+        )
+    return sorted(rows, key=lambda row: row["total_return"], reverse=True)
 
 
 def _gross_return_for_action(action: str, outcome_return: float, config: BacktestConfig) -> float:
@@ -204,8 +249,8 @@ def _baseline_feedback(predictions: pd.DataFrame, action: str) -> pd.DataFrame:
     return baseline
 
 
-def _validate_walk_forward_dataset(dataset: pd.DataFrame) -> None:
-    required = {"timestamp", "label", "outcome_return", *FEATURE_COLUMNS}
+def _validate_walk_forward_dataset(dataset: pd.DataFrame, feature_columns: list[str]) -> None:
+    required = {"timestamp", "label", "outcome_return", *feature_columns}
     missing = required - set(dataset.columns)
     if missing:
         raise ValueError(f"dataset missing columns: {sorted(missing)}")

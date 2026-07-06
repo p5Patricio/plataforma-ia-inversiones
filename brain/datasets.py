@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pandas as pd
 
-from brain.features import FEATURE_COLUMNS, build_features
+from brain.features import FEATURE_COLUMNS, build_features, feature_columns_for_set
 from brain.labeling import fixed_horizon_labels, triple_barrier_labels
 
 
@@ -14,6 +14,7 @@ def build_supervised_dataset(
     sell_threshold: float = -0.015,
     profit_take: float = 0.03,
     stop_loss: float = 0.015,
+    feature_set: str = "technical_v1",
 ) -> pd.DataFrame:
     """Create a training-ready dataset from OHLCV rows."""
     features = build_features(prices)
@@ -36,16 +37,21 @@ def build_supervised_dataset(
         raise ValueError("label_method must be 'fixed_horizon' or 'triple_barrier'")
 
     dataset = features.merge(labels, on="timestamp", how="inner")
-    required = FEATURE_COLUMNS + ["label"]
+    feature_columns = feature_columns_for_set(feature_set)
+    required = feature_columns + ["label"]
     return dataset.dropna(subset=required).reset_index(drop=True)
 
 
-def split_features_target(dataset: pd.DataFrame) -> tuple[pd.DataFrame, pd.Series]:
-    missing = set(FEATURE_COLUMNS + ["label"]) - set(dataset.columns)
+def split_features_target(
+    dataset: pd.DataFrame,
+    feature_columns: list[str] | None = None,
+) -> tuple[pd.DataFrame, pd.Series]:
+    columns = feature_columns or FEATURE_COLUMNS
+    missing = set(columns + ["label"]) - set(dataset.columns)
     if missing:
         raise ValueError(f"Dataset missing required columns: {sorted(missing)}")
 
-    return dataset[FEATURE_COLUMNS], dataset["label"]
+    return dataset[columns], dataset["label"]
 
 
 def build_dataset_from_materialized(

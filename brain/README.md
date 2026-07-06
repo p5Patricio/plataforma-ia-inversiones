@@ -41,6 +41,11 @@ Modelos disponibles:
 - `random_forest`
 - `extra_trees`
 
+Feature sets disponibles:
+
+- `technical_v1`: retornos, volatilidad, medias moviles, RSI, MACD, volumen, ATR y drawdown.
+- `technical_v2`: agrega momentum 10/20d, Bollinger Bands, stochastic, OBV, ADX, SMA 50 y ratio de volatilidad.
+
 ## Entrenamiento desde Supabase
 
 Despues de materializar features y labels:
@@ -82,7 +87,7 @@ Las predicciones quedan preparadas para evaluarse contra labels futuros mediante
 Antes de promover un modelo, ejecuta una evaluacion out-of-sample desde Supabase:
 
 ```powershell
-python -m brain.evaluate_from_supabase --ticker BTC-USD --feature-set technical_v1 --label-method triple_barrier --horizon 5 --model-name random_forest --out reports/btc_walk_forward_backtest.json
+python -m brain.evaluate_from_supabase --ticker BTC-USD --feature-set technical_v2 --label-method triple_barrier --horizon 5 --model-name extra_trees --confidence-sweep 0.50,0.55,0.60,0.65,0.70,0.75 --out reports/btc_walk_forward_backtest.json
 ```
 
 Este comando:
@@ -93,6 +98,7 @@ Este comando:
 4. aplica embargo y evalua una operacion cada `horizon` filas por defecto para reducir solapamiento;
 5. calcula retorno neto, drawdown, win rate y profit factor despues de costos;
 6. compara contra baselines `no_trade`, `always_buy` y `always_sell`.
+7. opcionalmente ordena los resultados de `--confidence-sweep` por retorno total para encontrar umbrales candidatos.
 
 ### Risk engine
 

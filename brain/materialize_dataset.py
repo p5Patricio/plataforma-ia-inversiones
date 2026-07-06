@@ -3,7 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 
-from brain.features import FEATURE_COLUMNS, build_features
+from brain.features import build_features, feature_columns_for_set
 from brain.labeling import fixed_horizon_labels, triple_barrier_labels
 from collector.supabase_repository import SupabaseConfig, SupabaseRepository
 
@@ -48,11 +48,12 @@ def main() -> None:
 
     features = build_features(prices)
     labels = build_labels(args, prices)
+    feature_columns = feature_columns_for_set(args.feature_set)
 
     features_loaded = repository.upsert_features(
         asset_id=asset_id,
         features=features,
-        feature_columns=FEATURE_COLUMNS,
+        feature_columns=feature_columns,
         feature_set=args.feature_set,
         batch_size=args.batch_size,
     )

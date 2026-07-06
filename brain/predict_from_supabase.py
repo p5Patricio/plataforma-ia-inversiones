@@ -7,6 +7,7 @@ from pathlib import Path
 import joblib
 
 from brain.datasets import build_feature_frame_from_materialized
+from brain.features import feature_columns_for_set
 from brain.inference import PredictionPolicy, predict_actions
 from brain.risk import RiskPolicy, apply_risk_policy
 from collector.supabase_repository import SupabaseConfig, SupabaseRepository
@@ -39,17 +40,19 @@ def main() -> None:
         raise RuntimeError(f"Model run has no artifact_uri: {args.model_name}:{args.model_version}")
 
     model = joblib.load(Path(artifact_uri))
+    feature_columns = feature_columns_for_set(model_run["feature_set"])
     feature_rows = repository.get_features(
         asset_id=asset_id,
         feature_set=model_run["feature_set"],
         limit=args.limit,
         ascending=False,
     )
-    feature_frame = build_feature_frame_from_materialized(feature_rows)
+    feature_frame = build_feature_frame_from_materialized(feature_rows, feature_columns=feature_columns)
     predictions = predict_actions(
         model,
         feature_frame,
         policy=PredictionPolicy(min_confidence=args.min_confidence),
+        feature_columns=feature_columns,
     )
     predictions = apply_risk_policy(
         predictions,

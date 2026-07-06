@@ -8,6 +8,7 @@ from pathlib import Path
 import joblib
 
 from brain.datasets import build_dataset_from_materialized
+from brain.features import feature_columns_for_set
 from brain.models import (
     DEFAULT_MODEL_NAME,
     available_model_names,
@@ -43,13 +44,21 @@ def main() -> None:
     asset_id = repository.get_asset_id(args.ticker)
     features = repository.get_features(asset_id, args.feature_set, limit=args.limit)
     labels = repository.get_labels(asset_id, args.label_method, args.horizon, limit=args.limit)
-    dataset = build_dataset_from_materialized(features, labels)
+    feature_columns = feature_columns_for_set(args.feature_set)
+    dataset = build_dataset_from_materialized(features, labels, feature_columns=feature_columns)
 
-    evaluation = walk_forward_evaluate(dataset, n_splits=args.splits, model_name=args.model_name)
-    model = train_final_model(dataset, model_name=args.model_name)
+    evaluation = walk_forward_evaluate(
+        dataset,
+        n_splits=args.splits,
+        model_name=args.model_name,
+        feature_columns=feature_columns,
+    )
+    model = train_final_model(dataset, model_name=args.model_name, feature_columns=feature_columns)
     model_spec = get_model_spec(args.model_name)
 
-    artifact_path = Path(args.model_out or f"models/{args.ticker.upper()}_{args.model_name}_{args.model_version}.joblib")
+    artifact_path = Path(
+        args.model_out or f"models/{args.ticker.upper()}_{args.model_name}_{args.feature_set}_{args.model_version}.joblib"
+    )
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, artifact_path)
 

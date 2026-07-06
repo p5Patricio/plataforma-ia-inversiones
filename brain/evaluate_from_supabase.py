@@ -4,8 +4,9 @@ import argparse
 import json
 from pathlib import Path
 
-from brain.backtesting import BacktestConfig, run_walk_forward_model_backtest
+from brain.backtesting import BacktestConfig, run_confidence_threshold_sweep, run_walk_forward_model_backtest
 from brain.datasets import build_dataset_from_materialized
+from brain.features import feature_columns_for_set
 from brain.inference import PredictionPolicy
 from brain.models import DEFAULT_MODEL_NAME, available_model_names
 from collector.supabase_repository import SupabaseConfig, SupabaseRepository
@@ -24,6 +25,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--trade-stride", type=int, help="Evaluate one trade every N rows. Defaults to horizon")
     parser.add_argument("--limit", type=int, help="Optional max number of materialized rows to read")
     parser.add_argument("--min-confidence", type=float, default=0.55)
+    parser.add_argument(
+        "--confidence-sweep",
+        help="Comma-separated thresholds to compare, e.g. 0.55,0.60,0.65,0.70",
+    )
     parser.add_argument("--initial-capital", type=float, default=10_000.0)
     parser.add_argument("--position-size", type=float, default=1.0)
     parser.add_argument("--fee-bps", type=float, default=5.0)
@@ -39,7 +44,8 @@ def main() -> None:
     asset_id = repository.get_asset_id(args.ticker)
     features = repository.get_features(asset_id, args.feature_set, limit=args.limit)
     labels = repository.get_labels(asset_id, args.label_method, args.horizon, limit=args.limit)
-    dataset = build_dataset_from_materialized(features, labels)
+    feature_columns = feature_columns_for_set(args.feature_set)
+    dataset = build_dataset_from_materialized(features, labels, feature_columns=feature_columns)
 
     result = run_walk_forward_model_backtest(
         dataset,
@@ -48,6 +54,7 @@ def main() -> None:
         embargo_rows=args.embargo_rows if args.embargo_rows is not None else args.horizon,
         trade_stride=args.trade_stride if args.trade_stride is not None else args.horizon,
         model_name=args.model_name,
+        feature_columns=feature_columns,
         prediction_policy=PredictionPolicy(min_confidence=args.min_confidence),
         config=BacktestConfig(
             initial_capital=args.initial_capital,
@@ -69,6 +76,24 @@ def main() -> None:
         "folds": result.folds,
         "predictions": result.predictions.to_dict(orient="records"),
     }
+    if args.confidence_sweep:
+        payload["threshold_sweep"] = run_confidence_threshold_sweep(
+            dataset,
+            thresholds=parse_thresholds(args.confidence_sweep),
+            n_splits=args.splits,
+            test_size=args.test_size,
+            embargo_rows=args.embargo_rows if args.embargo_rows is not None else args.horizon,
+            trade_stride=args.trade_stride if args.trade_stride is not None else args.horizon,
+            model_name=args.model_name,
+            feature_columns=feature_columns,
+            config=BacktestConfig(
+                initial_capital=args.initial_capital,
+                position_size=args.position_size,
+                fee_bps=args.fee_bps,
+                slippage_bps=args.slippage_bps,
+                allow_short=not args.no_short,
+            ),
+        )
 
     if args.out:
         out = Path(args.out)
@@ -76,6 +101,16 @@ def main() -> None:
         out.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
     else:
         print(json.dumps(payload, indent=2, default=str))
+
+
+def parse_thresholds(raw: str) -> list[float]:
+    thresholds = [float(item.strip()) for item in raw.split(",") if item.strip()]
+    if not thresholds:
+        raise ValueError("confidence sweep must include at least one threshold")
+    invalid = [threshold for threshold in thresholds if threshold < 0 or threshold > 1]
+    if invalid:
+        raise ValueError(f"confidence thresholds must be between 0 and 1: {invalid}")
+    return thresholds
 
 
 if __name__ == "__main__":
