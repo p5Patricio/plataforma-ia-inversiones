@@ -12,6 +12,7 @@ from brain.features import FEATURE_COLUMNS, FEATURE_COLUMNS_TECHNICAL_V2, build_
 from brain.inference import PredictionPolicy, predict_actions
 from brain.labeling import BUY, HOLD, SELL, fixed_horizon_labels, triple_barrier_labels
 from brain.models import available_model_names, create_model, walk_forward_evaluate
+from brain.promotion import build_promoted_training_frame, select_candidate
 from brain.risk import RiskPolicy, apply_risk_policy
 from brain.scoped_evaluation import AssetDataset, run_scoped_walk_forward_backtest
 from brain.selection import PromotionCriteria, evaluate_promotion, rank_candidate_summaries, score_candidate
@@ -535,6 +536,77 @@ def test_run_candidate_matrix_compares_scopes_and_thresholds() -> None:
     assert {row["scope"] for row in matrix["ranking"]} == {"local", "global"}
     assert {row["min_confidence"] for row in matrix["ranking"]} == {0.55, 0.65}
     assert all(row["candidate_id"].startswith("BTC-USD::logistic_regression") for row in matrix["ranking"])
+
+
+def test_select_candidate_uses_top_promotable_rank() -> None:
+    report = {
+        "ranking": [
+            {"candidate_id": "failed", "promotion": {"status": "fail"}, "objective_score": 0.9},
+            {"candidate_id": "winner", "promotion": {"status": "pass"}, "objective_score": 0.8},
+            {"candidate_id": "runner-up", "promotion": {"status": "pass"}, "objective_score": 0.7},
+        ]
+    }
+
+    selected = select_candidate(report)
+    second = select_candidate(report, rank=2)
+
+    assert selected["candidate_id"] == "winner"
+    assert second["candidate_id"] == "runner-up"
+
+
+def test_select_candidate_blocks_failed_candidate_by_default() -> None:
+    report = {"ranking": [{"candidate_id": "failed", "promotion": {"status": "fail"}}]}
+
+    try:
+        select_candidate(report, candidate_id="failed")
+    except ValueError as error:
+        assert "not promotable" in str(error)
+    else:
+        raise AssertionError("Expected failed candidate to be blocked")
+
+
+def test_build_promoted_training_frame_uses_candidate_scope() -> None:
+    target = AssetDataset(
+        asset_id="btc-id",
+        ticker="BTC-USD",
+        asset_class="crypto",
+        dataset=build_supervised_dataset(
+            make_prices(150),
+            label_method="triple_barrier",
+            horizon=3,
+            profit_take=0.01,
+            stop_loss=0.01,
+        ).assign(asset_id="btc-id", ticker="BTC-USD", asset_class="crypto"),
+    )
+    peer_crypto = AssetDataset(
+        asset_id="eth-id",
+        ticker="ETH-USD",
+        asset_class="crypto",
+        dataset=build_supervised_dataset(
+            make_prices(150).assign(close=lambda frame: frame["close"] * 0.8),
+            label_method="triple_barrier",
+            horizon=3,
+            profit_take=0.01,
+            stop_loss=0.01,
+        ).assign(asset_id="eth-id", ticker="ETH-USD", asset_class="crypto"),
+    )
+    stock = AssetDataset(
+        asset_id="aapl-id",
+        ticker="AAPL",
+        asset_class="stock",
+        dataset=build_supervised_dataset(
+            make_prices(150).assign(close=lambda frame: frame["close"] * 1.2),
+            label_method="triple_barrier",
+            horizon=3,
+            profit_take=0.01,
+            stop_loss=0.01,
+        ).assign(asset_id="aapl-id", ticker="AAPL", asset_class="stock"),
+    )
+
+    frame, assets = build_promoted_training_frame([target, peer_crypto, stock], "BTC-USD", "asset_class")
+
+    assert set(frame["ticker"]) == {"BTC-USD", "ETH-USD"}
+    assert {asset["ticker"] for asset in assets} == {"BTC-USD", "ETH-USD"}
 
 
 def test_apply_risk_policy_sizes_confident_trade() -> None:

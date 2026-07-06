@@ -142,6 +142,31 @@ La salida contiene:
 
 Este comando es el punto de partida para decidir que combinacion de modelo, scope y umbral merece entrenarse como artefacto candidato para predicciones reales.
 
+## Promover un candidato
+
+Despues de generar un reporte de matriz, promueve el mejor candidato aprobado a `model_runs`:
+
+```powershell
+python -m brain.promote_candidate_from_report --report reports/btc_candidate_matrix.json --out reports/btc_promotion.json
+```
+
+Este comando:
+
+1. toma el primer candidato con `promotion.status == pass`;
+2. reconstruye el dataset segun su `scope`;
+3. entrena el modelo final con todos los labels disponibles;
+4. guarda el artefacto `.joblib` en `models/`;
+5. registra el `model_run` en Supabase con `candidate_id`, metricas y assets usados;
+6. genera la prediccion mas reciente para el activo objetivo.
+
+Para promover un candidato especifico:
+
+```powershell
+python -m brain.promote_candidate_from_report --report reports/btc_candidate_matrix.json --candidate-id BTC-USD::extra_trees::confidence_0.6500::global
+```
+
+Usa `--skip-prediction` si solo quieres registrar el modelo sin escribir una senal nueva.
+
 ### Risk engine
 
 El comando de prediccion tambien aplica reglas de riesgo:
