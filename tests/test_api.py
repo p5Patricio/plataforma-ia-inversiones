@@ -12,6 +12,7 @@ class FakeRepository:
         self.prediction = prediction
         self.prices = prices if prices is not None else make_prices()
         self.feedback_kwargs: dict | None = None
+        self.backtest_kwargs: dict | None = None
 
     def get_assets(self) -> list[dict]:
         return [{"id": "asset-1", "ticker": "AAPL", "name": "Apple Inc.", "asset_class": "stock"}]
@@ -69,6 +70,50 @@ class FakeRepository:
                     "is_correct": None,
                     "outcome_return": None,
                     "prediction_created_at": "2026-07-05T00:01:00+00:00",
+                }
+            ]
+        )
+
+    def get_backtests(
+        self,
+        asset_id: str | None = None,
+        model_run_id: str | None = None,
+        limit: int | None = None,
+        ascending: bool = False,
+    ) -> pd.DataFrame:
+        self.backtest_kwargs = {
+            "asset_id": asset_id,
+            "model_run_id": model_run_id,
+            "limit": limit,
+            "ascending": ascending,
+        }
+        return pd.DataFrame(
+            [
+                {
+                    "id": "backtest-1",
+                    "name": "extra_trees:promoted:BTC-USD",
+                    "model_run_id": "run-1",
+                    "started_at": "2026-01-01T00:00:00+00:00",
+                    "ended_at": "2026-07-01T00:00:00+00:00",
+                    "created_at": "2026-07-06T00:00:00+00:00",
+                    "metrics": {
+                        "total_return": 0.25,
+                        "max_drawdown": -0.04,
+                        "profit_factor": 2.1,
+                        "active_trade_count": 20,
+                        "trade_count": 40,
+                        "win_rate": 0.58,
+                        "exposure": 0.5,
+                        "final_equity": 12500,
+                    },
+                    "params": {"fee_bps": 5},
+                    "model_runs": {
+                        "model_name": "extra_trees",
+                        "model_version": "promoted",
+                        "feature_set": "technical_v2",
+                        "label_method": "triple_barrier",
+                        "horizon": 5,
+                    },
                 }
             ]
         )
@@ -209,6 +254,38 @@ def test_prediction_history_endpoint_returns_empty_demo_history() -> None:
     client = TestClient(app)
 
     response = client.get("/api/predictions/BTC-USD")
+
+    clear_overrides()
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+def test_backtest_history_endpoint_returns_model_metrics() -> None:
+    repository = FakeRepository()
+    override_repository(repository)
+    client = TestClient(app)
+
+    response = client.get("/api/backtests/AAPL?limit=3")
+
+    clear_overrides()
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload[0]["id"] == "backtest-1"
+    assert payload[0]["model"]["name"] == "extra_trees"
+    assert payload[0]["metrics"]["total_return"] == 0.25
+    assert repository.backtest_kwargs == {
+        "asset_id": "asset-1",
+        "model_run_id": None,
+        "limit": 3,
+        "ascending": False,
+    }
+
+
+def test_backtest_history_endpoint_returns_empty_demo_history() -> None:
+    app.dependency_overrides[get_repository] = lambda: None
+    client = TestClient(app)
+
+    response = client.get("/api/backtests/BTC-USD")
 
     clear_overrides()
     assert response.status_code == 200

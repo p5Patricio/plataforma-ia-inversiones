@@ -424,6 +424,23 @@ class SupabaseRepository:
             raise RuntimeError(f"Supabase did not return created backtest: {name}")
         return data[0]["id"]
 
+    def get_backtests(
+        self,
+        asset_id: str | None = None,
+        model_run_id: str | None = None,
+        limit: int | None = None,
+        ascending: bool = False,
+    ) -> pd.DataFrame:
+        params = {
+            "select": "*,model_runs(model_name,model_version,feature_set,label_method,horizon)",
+            "order": "created_at.asc" if ascending else "created_at.desc",
+        }
+        if asset_id:
+            params["asset_id"] = f"eq.{asset_id}"
+        if model_run_id:
+            params["model_run_id"] = f"eq.{model_run_id}"
+        return pd.DataFrame(self._get_rows("backtests", params, limit=limit))
+
     def insert_backtest_trades(
         self,
         backtest_id: str,

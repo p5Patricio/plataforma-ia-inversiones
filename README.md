@@ -10,8 +10,8 @@ Plataforma experimental para investigacion, entrenamiento y evaluacion de modelo
 
 | Area | Estado |
 | --- | --- |
-| Frontend | Dashboard React con activos, grafico, senal, riesgo, probabilidades, estado del modelo e historial de predicciones. |
-| API | FastAPI con endpoints para activos, precios, analisis e historial de predicciones. |
+| Frontend | Dashboard React con activos, grafico, senal, riesgo, probabilidades, backtests e historial de predicciones. |
+| API | FastAPI con endpoints para activos, precios, analisis, backtests e historial de predicciones. |
 | Datos | Supabase como fuente principal; modo demo local cuando Supabase no esta disponible. |
 | ML | Pipeline base para features, labels, entrenamiento, inferencia, feedback y backtesting. |
 | Calidad | Suite de pruebas para API, collector, repositorio Supabase y pipeline de modelo. |
@@ -26,6 +26,7 @@ La interfaz esta pensada como una consola operativa, no como landing page. El us
 - Grafico historico de precio.
 - Gestion de riesgo: posicion, stop, objetivo y bloqueos.
 - Probabilidades por accion.
+- Backtests persistidos por instrumento y version de modelo.
 - Metadatos del modelo o indicador que genero la lectura.
 - Historial reciente para auditar predicciones y feedback.
 
@@ -151,7 +152,6 @@ Si falla DNS o red, la API activa el modo demo local para que el dashboard siga 
 
 ## Roadmap
 
-- Mostrar backtests por instrumento y version de modelo.
 - Integrar jobs programados de ingestion e inferencia.
 - Separar modo demo, staging y produccion por configuracion.
 - Agregar autenticacion y perfiles de riesgo por usuario.

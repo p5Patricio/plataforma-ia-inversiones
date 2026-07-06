@@ -92,12 +92,32 @@ interface PredictionAuditRow {
   feedback?: FeedbackMetadata;
 }
 
+interface BacktestSummaryRow {
+  id?: string;
+  name?: string;
+  started_at?: string | null;
+  ended_at?: string | null;
+  created_at?: string | null;
+  metrics?: {
+    total_return?: number | null;
+    max_drawdown?: number | null;
+    profit_factor?: number | null;
+    active_trade_count?: number | null;
+    trade_count?: number | null;
+    win_rate?: number | null;
+    exposure?: number | null;
+    final_equity?: number | null;
+  };
+  model?: ModelMetadata;
+}
+
 function App() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [selectedTicker, setSelectedTicker] = useState('');
   const [prices, setPrices] = useState<PricePoint[]>([]);
   const [analysisResponse, setAnalysisResponse] = useState<AnalysisResponse | null>(null);
   const [predictionHistory, setPredictionHistory] = useState<PredictionAuditRow[]>([]);
+  const [backtests, setBacktests] = useState<BacktestSummaryRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -115,16 +135,20 @@ function App() {
     setLoading(true);
     setError(null);
     try {
-      const [pricesResponse, analysisResponse, historyResponse] = await Promise.all([
+      const [pricesResponse, analysisResponse, historyResponse, backtestsResponse] = await Promise.all([
         axios.get<PricePoint[]>(`${API_BASE_URL}/prices/${ticker}?limit=240`),
         axios.get<AnalysisResponse>(`${API_BASE_URL}/analysis/${ticker}`),
         axios
           .get<PredictionAuditRow[]>(`${API_BASE_URL}/predictions/${ticker}?limit=8`)
           .catch(() => ({ data: [] as PredictionAuditRow[] })),
+        axios
+          .get<BacktestSummaryRow[]>(`${API_BASE_URL}/backtests/${ticker}?limit=5`)
+          .catch(() => ({ data: [] as BacktestSummaryRow[] })),
       ]);
       setPrices(pricesResponse.data);
       setAnalysisResponse(analysisResponse.data);
       setPredictionHistory(historyResponse.data);
+      setBacktests(backtestsResponse.data);
     } catch {
       setError('No se pudo actualizar la señal.');
     } finally {
@@ -275,6 +299,7 @@ function App() {
             </div>
           </div>
 
+          <BacktestPanel rows={backtests} />
           <PredictionHistoryPanel rows={predictionHistory} />
         </section>
       </main>
@@ -411,6 +436,63 @@ function ModelPanel({ analysis }: { analysis: Analysis | null }) {
         <InfoRow label="Label" value={model?.label_method ?? 'N/D'} />
         <InfoRow label="Resultado" value={feedbackLabel(feedback)} />
       </div>
+    </section>
+  );
+}
+
+function BacktestPanel({ rows }: { rows: BacktestSummaryRow[] }) {
+  const latest = rows[0];
+
+  return (
+    <section className="rounded-lg border border-white/10 bg-[#181b1a] p-4">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <BarChart3 aria-hidden="true" className="h-4 w-4 text-sky-300" />
+          <h2 className="text-sm font-medium text-zinc-100">Backtests</h2>
+        </div>
+        <span className="text-xs text-zinc-500">{rows.length}</span>
+      </div>
+
+      {!latest ? (
+        <div className="rounded-lg border border-dashed border-white/10 px-3 py-6 text-center text-sm text-zinc-500">
+          Sin backtests persistidos
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <SmallMetric label="Retorno" value={formatPercent(latest.metrics?.total_return)} />
+            <SmallMetric label="Drawdown" value={formatPercent(latest.metrics?.max_drawdown)} />
+            <SmallMetric label="Profit factor" value={formatNumber(latest.metrics?.profit_factor)} />
+            <SmallMetric label="Trades" value={formatCount(latest.metrics?.active_trade_count)} />
+          </div>
+
+          <div className="overflow-hidden rounded-lg border border-white/10">
+            <div className="grid grid-cols-[1fr_88px_88px_72px] gap-3 border-b border-white/10 bg-black/20 px-3 py-2 text-xs text-zinc-500 md:grid-cols-[1fr_100px_100px_92px_96px]">
+              <span>Modelo</span>
+              <span>Retorno</span>
+              <span>Drawdown</span>
+              <span>PF</span>
+              <span className="hidden md:block">Fecha</span>
+            </div>
+            <div className="divide-y divide-white/10">
+              {rows.map((row) => (
+                <div
+                  key={row.id ?? row.name}
+                  className="grid grid-cols-[1fr_88px_88px_72px] gap-3 px-3 py-3 text-sm md:grid-cols-[1fr_100px_100px_92px_96px]"
+                >
+                  <span className="min-w-0 truncate text-zinc-200">
+                    {row.model?.name ?? 'Modelo'}:{row.model?.version ?? row.name ?? 'N/D'}
+                  </span>
+                  <span className={metricTone(row.metrics?.total_return)}>{formatPercent(row.metrics?.total_return)}</span>
+                  <span className="text-zinc-300">{formatPercent(row.metrics?.max_drawdown)}</span>
+                  <span className="text-zinc-300">{formatNumber(row.metrics?.profit_factor)}</span>
+                  <span className="hidden text-zinc-400 md:block">{row.created_at ? formatShortDate(row.created_at) : 'N/D'}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </section>
   );
 }
@@ -585,6 +667,23 @@ function probabilityColor(label: string) {
 function formatPercent(value?: number | null) {
   if (value === null || value === undefined || Number.isNaN(value)) return 'N/D';
   return `${(value * 100).toFixed(0)}%`;
+}
+
+function formatNumber(value?: number | null) {
+  if (value === null || value === undefined || Number.isNaN(value)) return 'N/D';
+  return value.toFixed(2);
+}
+
+function formatCount(value?: number | null) {
+  if (value === null || value === undefined || Number.isNaN(value)) return 'N/D';
+  return String(Math.round(value));
+}
+
+function metricTone(value?: number | null) {
+  if (value === null || value === undefined || Number.isNaN(value)) return 'text-zinc-300';
+  if (value > 0) return 'text-emerald-300';
+  if (value < 0) return 'text-red-300';
+  return 'text-zinc-300';
 }
 
 function formatCurrency(value: number) {

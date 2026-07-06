@@ -160,6 +160,30 @@ def get_prediction_history(
     return []
 
 
+@app.get("/api/backtests/{ticker}")
+def get_backtest_history(
+    ticker: str,
+    limit: int = Query(default=10, ge=1, le=50),
+    repository: SupabaseRepository | None = Depends(get_repository),
+):
+    if repository is None:
+        if not is_demo_ticker(ticker):
+            raise HTTPException(status_code=404, detail="Activo no encontrado") from None
+        return []
+
+    try:
+        asset_id = repository.get_asset_id(ticker)
+        backtests = repository.get_backtests(asset_id=asset_id, limit=limit, ascending=False)
+        return [format_backtest_history_row(row) for row in backtests.to_dict(orient="records")]
+    except ValueError:
+        if not is_demo_ticker(ticker):
+            raise HTTPException(status_code=404, detail="Activo no encontrado") from None
+    except (RuntimeError, RequestException):
+        pass
+
+    return []
+
+
 def format_prediction_analysis(prediction: dict) -> dict:
     metadata = prediction.get("metadata") or {}
     risk = metadata.get("risk") or {}
@@ -208,6 +232,38 @@ def format_prediction_analysis(prediction: dict) -> dict:
         "prediction_timestamp": prediction.get("timestamp"),
         "expected_return": prediction.get("expected_return"),
         "expected_risk": prediction.get("expected_risk"),
+    }
+
+
+def format_backtest_history_row(backtest: dict) -> dict:
+    metrics = backtest.get("metrics") or {}
+    params = backtest.get("params") or {}
+    model = backtest.get("model_runs") or {}
+    return {
+        "id": backtest.get("id"),
+        "name": backtest.get("name"),
+        "started_at": backtest.get("started_at"),
+        "ended_at": backtest.get("ended_at"),
+        "created_at": backtest.get("created_at"),
+        "metrics": {
+            "total_return": metrics.get("total_return"),
+            "max_drawdown": metrics.get("max_drawdown"),
+            "profit_factor": metrics.get("profit_factor"),
+            "active_trade_count": metrics.get("active_trade_count"),
+            "trade_count": metrics.get("trade_count"),
+            "win_rate": metrics.get("win_rate"),
+            "exposure": metrics.get("exposure"),
+            "final_equity": metrics.get("final_equity"),
+        },
+        "params": params,
+        "model": {
+            "name": model.get("model_name"),
+            "version": model.get("model_version"),
+            "run_id": backtest.get("model_run_id"),
+            "feature_set": model.get("feature_set"),
+            "label_method": model.get("label_method"),
+            "horizon": model.get("horizon"),
+        },
     }
 
 

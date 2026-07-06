@@ -455,6 +455,20 @@ def test_create_backtest_posts_summary_payload() -> None:
     assert session.post_calls[0]["headers"]["Prefer"] == "return=representation"
 
 
+def test_get_backtests_filters_asset_and_orders_descending() -> None:
+    session = FakeSession(get_responses=[FakeResponse([])], post_responses=[])
+    repository = make_repository(session)
+
+    backtests = repository.get_backtests(asset_id="asset-1", limit=5, ascending=False)
+
+    assert backtests.empty
+    params = session.get_calls[0]["params"]
+    assert params["asset_id"] == "eq.asset-1"
+    assert params["order"] == "created_at.desc"
+    assert params["limit"] == "5"
+    assert "model_runs(" in params["select"]
+
+
 def test_insert_backtest_trades_batches_payload() -> None:
     session = FakeSession(get_responses=[], post_responses=[FakeResponse()])
     repository = make_repository(session)
