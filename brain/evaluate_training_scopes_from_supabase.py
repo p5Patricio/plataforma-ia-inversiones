@@ -13,6 +13,7 @@ from brain.scoped_evaluation import (
     load_materialized_asset_dataset,
     run_scoped_walk_forward_backtest,
 )
+from brain.selection import PromotionCriteria, rank_candidate_summaries
 from collector.supabase_repository import SupabaseConfig, SupabaseRepository
 
 
@@ -36,6 +37,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--fee-bps", type=float, default=5.0)
     parser.add_argument("--slippage-bps", type=float, default=5.0)
     parser.add_argument("--no-short", action="store_true")
+    parser.add_argument("--min-total-return", type=float, default=0.0)
+    parser.add_argument("--min-profit-factor", type=float, default=1.0)
+    parser.add_argument("--max-drawdown-floor", type=float, default=-0.25)
+    parser.add_argument("--min-active-trades", type=int, default=20)
+    parser.add_argument("--drawdown-penalty", type=float, default=1.0)
     parser.add_argument("--out", help="Optional JSON report path")
     return parser.parse_args()
 
@@ -100,29 +106,35 @@ def main() -> None:
             }
         )
 
+    promotion_criteria = PromotionCriteria(
+        min_total_return=args.min_total_return,
+        min_profit_factor=args.min_profit_factor,
+        max_drawdown_floor=args.max_drawdown_floor,
+        min_active_trades=args.min_active_trades,
+    )
     payload = {
         "ticker": args.ticker.upper(),
         "feature_set": args.feature_set,
         "label_method": args.label_method,
         "horizon": args.horizon,
         "model_name": args.model_name,
+        "selection": {
+            "drawdown_penalty": args.drawdown_penalty,
+            "criteria": {
+                "min_total_return": promotion_criteria.min_total_return,
+                "min_profit_factor": promotion_criteria.min_profit_factor,
+                "max_drawdown_floor": promotion_criteria.max_drawdown_floor,
+                "min_active_trades": promotion_criteria.min_active_trades,
+                "require_positive_edge_vs_no_trade": promotion_criteria.require_positive_edge_vs_no_trade,
+            },
+        },
         "available_dataset_count": len(datasets),
         "skipped_assets": skipped_assets,
         "results": results,
-        "ranking": sorted(
-            [
-                {
-                    "scope": result["summary"]["scope"],
-                    "total_return": result["summary"]["model"]["total_return"],
-                    "max_drawdown": result["summary"]["model"]["max_drawdown"],
-                    "profit_factor": result["summary"]["model"]["profit_factor"],
-                    "active_trade_count": result["summary"]["model"]["active_trade_count"],
-                    "participating_asset_count": result["summary"]["participating_asset_count"],
-                }
-                for result in results
-            ],
-            key=lambda row: row["total_return"],
-            reverse=True,
+        "ranking": rank_candidate_summaries(
+            [result["summary"] for result in results],
+            criteria=promotion_criteria,
+            drawdown_penalty=args.drawdown_penalty,
         ),
     }
 

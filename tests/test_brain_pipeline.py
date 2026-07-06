@@ -13,6 +13,7 @@ from brain.labeling import BUY, HOLD, SELL, fixed_horizon_labels, triple_barrier
 from brain.models import available_model_names, create_model, walk_forward_evaluate
 from brain.risk import RiskPolicy, apply_risk_policy
 from brain.scoped_evaluation import AssetDataset, run_scoped_walk_forward_backtest
+from brain.selection import PromotionCriteria, evaluate_promotion, rank_candidate_summaries, score_candidate
 
 
 def make_prices(rows: int = 120) -> pd.DataFrame:
@@ -402,6 +403,92 @@ def test_run_scoped_walk_forward_backtest_compares_training_scopes() -> None:
     assert asset_class.folds[0]["train_rows"] > asset_class.folds[0]["target_train_rows"]
     assert global_result.summary["evaluated_rows"] == local.summary["evaluated_rows"]
     assert set(global_result.predictions["scope"]) == {"global"}
+
+
+def test_candidate_selection_scores_return_after_risk() -> None:
+    strong = {
+        "scope": "global",
+        "model_name": "extra_trees",
+        "min_confidence": 0.65,
+        "participating_asset_count": 3,
+        "model": {
+            "total_return": 0.30,
+            "max_drawdown": -0.08,
+            "profit_factor": 1.8,
+            "active_trade_count": 30,
+            "win_rate": 0.55,
+            "exposure": 0.40,
+        },
+        "baselines": {"no_trade": {"total_return": 0.0}},
+    }
+    fragile = {
+        "scope": "local",
+        "model_name": "extra_trees",
+        "min_confidence": 0.65,
+        "participating_asset_count": 1,
+        "model": {
+            "total_return": 0.32,
+            "max_drawdown": -0.22,
+            "profit_factor": 1.1,
+            "active_trade_count": 30,
+            "win_rate": 0.52,
+            "exposure": 0.40,
+        },
+        "baselines": {"no_trade": {"total_return": 0.0}},
+    }
+
+    assert score_candidate(strong) > score_candidate(fragile)
+
+    ranking = rank_candidate_summaries([fragile, strong])
+
+    assert ranking[0]["scope"] == "global"
+    assert ranking[0]["promotion"]["status"] == "pass"
+    assert ranking[1]["promotion"]["status"] == "pass"
+
+
+def test_candidate_selection_fails_when_sample_is_too_small() -> None:
+    summary = {
+        "scope": "local",
+        "model_name": "extra_trees",
+        "min_confidence": 0.75,
+        "participating_asset_count": 1,
+        "model": {
+            "total_return": 0.20,
+            "max_drawdown": -0.03,
+            "profit_factor": 2.0,
+            "active_trade_count": 5,
+            "win_rate": 0.80,
+            "exposure": 0.10,
+        },
+        "baselines": {"no_trade": {"total_return": 0.0}},
+    }
+
+    promotion = evaluate_promotion(summary, PromotionCriteria(min_active_trades=20))
+
+    assert promotion["status"] == "fail"
+    assert "active_trades_below_20" in promotion["failed"]
+
+
+def test_candidate_selection_allows_positive_no_loss_candidate() -> None:
+    summary = {
+        "scope": "local",
+        "model_name": "extra_trees",
+        "min_confidence": 0.75,
+        "participating_asset_count": 1,
+        "model": {
+            "total_return": 0.08,
+            "max_drawdown": 0.0,
+            "profit_factor": None,
+            "active_trade_count": 20,
+            "win_rate": 1.0,
+            "exposure": 0.20,
+        },
+        "baselines": {"no_trade": {"total_return": 0.0}},
+    }
+
+    promotion = evaluate_promotion(summary, PromotionCriteria(min_active_trades=20))
+
+    assert promotion["status"] == "pass"
 
 
 def test_apply_risk_policy_sizes_confident_trade() -> None:

@@ -116,6 +116,16 @@ Este comando evalua siempre el activo objetivo, pero cambia los datos usados par
 
 La comparacion ayuda a decidir si un modelo individual, por clase o global aporta mejor retorno ajustado por riesgo.
 
+El reporte incluye un `ranking` con `objective_score` y una decision de promocion. Por defecto, un candidato debe tener retorno positivo, `profit_factor >= 1.0`, drawdown no peor que `-25%`, minimo 20 operaciones activas y ventaja contra `no_trade`.
+
+Los criterios pueden endurecerse:
+
+```powershell
+python -m brain.evaluate_training_scopes_from_supabase --ticker BTC-USD --feature-set technical_v2 --label-method triple_barrier --horizon 5 --model-name extra_trees --min-confidence 0.65 --min-total-return 0.10 --min-profit-factor 1.3 --max-drawdown-floor -0.15 --min-active-trades 30 --drawdown-penalty 1.5 --out reports/btc_training_scopes.json
+```
+
+Este ranking no reemplaza una revision humana: sirve como compuerta automatica para que solo pasen modelos con evidencia suficiente de rentabilidad neta y control de riesgo.
+
 ### Risk engine
 
 El comando de prediccion tambien aplica reglas de riesgo:
