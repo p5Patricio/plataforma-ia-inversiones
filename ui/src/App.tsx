@@ -9,6 +9,7 @@ import {
   CircleDollarSign,
   Clock3,
   Gauge,
+  History,
   MinusCircle,
   RefreshCcw,
   ShieldCheck,
@@ -77,11 +78,26 @@ interface AnalysisResponse {
   analysis: Analysis;
 }
 
+interface PredictionAuditRow {
+  prediction_id?: number;
+  timestamp?: string;
+  created_at?: string;
+  action: Signal;
+  confidence?: number | null;
+  probabilities?: Record<string, number>;
+  expected_return?: number | null;
+  expected_risk?: number | null;
+  model?: ModelMetadata;
+  risk?: RiskMetadata;
+  feedback?: FeedbackMetadata;
+}
+
 function App() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [selectedTicker, setSelectedTicker] = useState('');
   const [prices, setPrices] = useState<PricePoint[]>([]);
   const [analysisResponse, setAnalysisResponse] = useState<AnalysisResponse | null>(null);
+  const [predictionHistory, setPredictionHistory] = useState<PredictionAuditRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -99,12 +115,16 @@ function App() {
     setLoading(true);
     setError(null);
     try {
-      const [pricesResponse, analysisResponse] = await Promise.all([
+      const [pricesResponse, analysisResponse, historyResponse] = await Promise.all([
         axios.get<PricePoint[]>(`${API_BASE_URL}/prices/${ticker}?limit=240`),
         axios.get<AnalysisResponse>(`${API_BASE_URL}/analysis/${ticker}`),
+        axios
+          .get<PredictionAuditRow[]>(`${API_BASE_URL}/predictions/${ticker}?limit=8`)
+          .catch(() => ({ data: [] as PredictionAuditRow[] })),
       ]);
       setPrices(pricesResponse.data);
       setAnalysisResponse(analysisResponse.data);
+      setPredictionHistory(historyResponse.data);
     } catch {
       setError('No se pudo actualizar la señal.');
     } finally {
@@ -254,6 +274,8 @@ function App() {
               <ModelPanel analysis={analysis} />
             </div>
           </div>
+
+          <PredictionHistoryPanel rows={predictionHistory} />
         </section>
       </main>
     </div>
@@ -393,6 +415,59 @@ function ModelPanel({ analysis }: { analysis: Analysis | null }) {
   );
 }
 
+function PredictionHistoryPanel({ rows }: { rows: PredictionAuditRow[] }) {
+  return (
+    <section className="rounded-lg border border-white/10 bg-[#181b1a] p-4">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <History aria-hidden="true" className="h-4 w-4 text-emerald-300" />
+          <h2 className="text-sm font-medium text-zinc-100">Auditoria</h2>
+        </div>
+        <span className="text-xs text-zinc-500">{rows.length}</span>
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-white/10 px-3 py-6 text-center text-sm text-zinc-500">
+          Sin predicciones historicas
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-lg border border-white/10">
+          <div className="grid grid-cols-[88px_1fr_88px_96px] gap-3 border-b border-white/10 bg-black/20 px-3 py-2 text-xs text-zinc-500 md:grid-cols-[116px_92px_1fr_96px_112px_120px]">
+            <span>Fecha</span>
+            <span className="hidden md:block">Accion</span>
+            <span>Modelo</span>
+            <span>Confianza</span>
+            <span className="hidden md:block">Resultado</span>
+            <span className="hidden md:block">Riesgo</span>
+          </div>
+          <div className="divide-y divide-white/10">
+            {rows.map((row, index) => {
+              const blocked = row.risk?.blocked_reasons ?? [];
+              return (
+                <div
+                  key={`${row.prediction_id ?? row.timestamp ?? index}`}
+                  className="grid grid-cols-[88px_1fr_88px_96px] gap-3 px-3 py-3 text-sm md:grid-cols-[116px_92px_1fr_96px_112px_120px]"
+                >
+                  <span className="text-zinc-400">{row.timestamp ? formatShortDate(row.timestamp) : 'N/D'}</span>
+                  <span className={`hidden font-medium md:block ${signalTone(row.action).text}`}>{row.action}</span>
+                  <span className="min-w-0 truncate text-zinc-200">
+                    {row.model?.name ?? 'Modelo'}:{row.model?.version ?? 'N/D'}
+                  </span>
+                  <span className="text-zinc-200">{formatPercent(row.confidence)}</span>
+                  <span className="hidden text-zinc-300 md:block">{feedbackLabel(row.feedback)}</span>
+                  <span className="hidden truncate text-zinc-400 md:block">
+                    {blocked.length > 0 ? blocked.map(humanizeReason).join(', ') : formatPercent(row.risk?.position_size)}
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </section>
+  );
+}
+
 function PriceSnapshot({ prices }: { prices: PricePoint[] }) {
   const latest = prices[0];
   if (!latest) {
@@ -524,6 +599,13 @@ function formatDateTime(value: string) {
   return new Intl.DateTimeFormat('es-MX', {
     dateStyle: 'medium',
     timeStyle: 'short',
+  }).format(new Date(value));
+}
+
+function formatShortDate(value: string) {
+  return new Intl.DateTimeFormat('es-MX', {
+    month: 'short',
+    day: 'numeric',
   }).format(new Date(value));
 }
 

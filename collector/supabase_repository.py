@@ -350,10 +350,11 @@ class SupabaseRepository:
         asset_id: str | None = None,
         only_evaluated: bool = True,
         limit: int | None = None,
+        ascending: bool = True,
     ) -> pd.DataFrame:
         params = {
             "select": "*",
-            "order": "timestamp.asc",
+            "order": "timestamp.asc" if ascending else "timestamp.desc",
         }
         if model_name:
             params["model_name"] = f"eq.{model_name}"

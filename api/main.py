@@ -126,6 +126,40 @@ def analyze_ticker(
     }
 
 
+@app.get("/api/predictions/{ticker}")
+def get_prediction_history(
+    ticker: str,
+    limit: int = Query(default=20, ge=1, le=100),
+    model_name: str | None = Query(default=None),
+    model_version: str | None = Query(default=None),
+    only_evaluated: bool = Query(default=False),
+    repository: SupabaseRepository | None = Depends(get_repository),
+):
+    if repository is None:
+        if not is_demo_ticker(ticker):
+            raise HTTPException(status_code=404, detail="Activo no encontrado") from None
+        return []
+
+    try:
+        asset_id = repository.get_asset_id(ticker)
+        feedback = repository.get_prediction_feedback(
+            asset_id=asset_id,
+            model_name=model_name,
+            model_version=model_version,
+            only_evaluated=only_evaluated,
+            limit=limit,
+            ascending=False,
+        )
+        return [format_prediction_history_row(row) for row in feedback.to_dict(orient="records")]
+    except ValueError:
+        if not is_demo_ticker(ticker):
+            raise HTTPException(status_code=404, detail="Activo no encontrado") from None
+    except (RuntimeError, RequestException):
+        pass
+
+    return []
+
+
 def format_prediction_analysis(prediction: dict) -> dict:
     metadata = prediction.get("metadata") or {}
     risk = metadata.get("risk") or {}
@@ -174,6 +208,42 @@ def format_prediction_analysis(prediction: dict) -> dict:
         "prediction_timestamp": prediction.get("timestamp"),
         "expected_return": prediction.get("expected_return"),
         "expected_risk": prediction.get("expected_risk"),
+    }
+
+
+def format_prediction_history_row(prediction: dict) -> dict:
+    metadata = prediction.get("metadata") or {}
+    risk = metadata.get("risk") or {}
+    blocked = risk.get("blocked_reasons") or []
+    return {
+        "prediction_id": prediction.get("prediction_id"),
+        "ticker": prediction.get("ticker"),
+        "timestamp": prediction.get("timestamp"),
+        "created_at": prediction.get("prediction_created_at"),
+        "action": prediction.get("predicted_action") or prediction.get("action") or "HOLD",
+        "confidence": prediction.get("confidence"),
+        "probabilities": prediction.get("probabilities") or {},
+        "expected_return": prediction.get("expected_return"),
+        "expected_risk": prediction.get("expected_risk"),
+        "model": {
+            "name": prediction.get("model_name"),
+            "version": prediction.get("model_version"),
+            "run_id": prediction.get("model_run_id"),
+            "feature_set": prediction.get("feature_set"),
+            "label_method": prediction.get("label_method"),
+            "horizon": prediction.get("horizon"),
+        },
+        "risk": {
+            "position_size": risk.get("position_size", 0),
+            "stop_loss": risk.get("stop_loss"),
+            "take_profit": risk.get("take_profit"),
+            "blocked_reasons": blocked,
+        },
+        "feedback": {
+            "actual_label": prediction.get("actual_label"),
+            "is_correct": prediction.get("is_correct"),
+            "outcome_return": prediction.get("outcome_return"),
+        },
     }
 
 

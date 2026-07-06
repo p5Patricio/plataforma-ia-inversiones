@@ -11,6 +11,7 @@ class FakeRepository:
     def __init__(self, prediction: dict | None = None, prices: pd.DataFrame | None = None) -> None:
         self.prediction = prediction
         self.prices = prices if prices is not None else make_prices()
+        self.feedback_kwargs: dict | None = None
 
     def get_assets(self) -> list[dict]:
         return [{"id": "asset-1", "ticker": "AAPL", "name": "Apple Inc.", "asset_class": "stock"}]
@@ -31,6 +32,46 @@ class FakeRepository:
         model_version: str | None = None,
     ) -> dict | None:
         return self.prediction
+
+    def get_prediction_feedback(
+        self,
+        model_name: str | None = None,
+        model_version: str | None = None,
+        asset_id: str | None = None,
+        only_evaluated: bool = True,
+        limit: int | None = None,
+        ascending: bool = True,
+    ) -> pd.DataFrame:
+        self.feedback_kwargs = {
+            "model_name": model_name,
+            "model_version": model_version,
+            "asset_id": asset_id,
+            "only_evaluated": only_evaluated,
+            "limit": limit,
+            "ascending": ascending,
+        }
+        return pd.DataFrame(
+            [
+                {
+                    "prediction_id": 1,
+                    "timestamp": "2026-07-05T00:00:00+00:00",
+                    "predicted_action": "HOLD",
+                    "confidence": 0.45,
+                    "probabilities": {"BUY": 0.3, "HOLD": 0.45, "SELL": 0.25},
+                    "model_name": "extra_trees",
+                    "model_version": "promoted",
+                    "model_run_id": "run-1",
+                    "feature_set": "technical_v2",
+                    "label_method": "triple_barrier",
+                    "horizon": 5,
+                    "metadata": {"risk": {"position_size": 0, "blocked_reasons": ["confidence_below_trade_threshold"]}},
+                    "actual_label": None,
+                    "is_correct": None,
+                    "outcome_return": None,
+                    "prediction_created_at": "2026-07-05T00:01:00+00:00",
+                }
+            ]
+        )
 
 
 class PredictionUnavailableRepository(FakeRepository):
@@ -138,6 +179,40 @@ def test_analysis_endpoint_uses_real_prices_when_prediction_feedback_is_unavaila
     payload = response.json()
     assert payload["source"] == "fallback_indicators"
     assert payload["analysis"]["signal"] in {"BUY", "SELL", "HOLD"}
+
+
+def test_prediction_history_endpoint_returns_audit_rows() -> None:
+    repository = FakeRepository()
+    override_repository(repository)
+    client = TestClient(app)
+
+    response = client.get("/api/predictions/AAPL?limit=5&only_evaluated=false")
+
+    clear_overrides()
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload[0]["action"] == "HOLD"
+    assert payload[0]["model"]["name"] == "extra_trees"
+    assert payload[0]["risk"]["blocked_reasons"] == ["confidence_below_trade_threshold"]
+    assert repository.feedback_kwargs == {
+        "model_name": None,
+        "model_version": None,
+        "asset_id": "asset-1",
+        "only_evaluated": False,
+        "limit": 5,
+        "ascending": False,
+    }
+
+
+def test_prediction_history_endpoint_returns_empty_demo_history() -> None:
+    app.dependency_overrides[get_repository] = lambda: None
+    client = TestClient(app)
+
+    response = client.get("/api/predictions/BTC-USD")
+
+    clear_overrides()
+    assert response.status_code == 200
+    assert response.json() == []
 
 
 def test_prices_endpoint_returns_descending_prices() -> None:

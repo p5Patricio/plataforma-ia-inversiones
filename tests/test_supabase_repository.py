@@ -420,6 +420,17 @@ def test_get_prediction_feedback_filters_view() -> None:
     assert params["limit"] == "25"
 
 
+def test_get_prediction_feedback_can_order_descending() -> None:
+    session = FakeSession(get_responses=[FakeResponse([])], post_responses=[])
+    repository = make_repository(session)
+
+    repository.get_prediction_feedback(asset_id="asset-1", only_evaluated=False, ascending=False, limit=10)
+
+    params = session.get_calls[0]["params"]
+    assert params["order"] == "timestamp.desc"
+    assert "actual_label" not in params
+
+
 def test_create_backtest_posts_summary_payload() -> None:
     session = FakeSession(
         get_responses=[],
