@@ -134,7 +134,7 @@ Si falla DNS o red, la API activa el modo demo local para que el dashboard siga 
 1. Descargar historicos de mercado por instrumento.
 2. Cargar precios normalizados a Supabase.
 3. Materializar features tecnicos y labels.
-4. Entrenar modelos con validacion walk-forward.
+4. Entrenar modelos candidatos con validacion walk-forward.
 5. Evaluar out-of-sample con backtesting y baselines.
 6. Guardar `model_runs`, predicciones y metadata.
 7. Evaluar feedback de predicciones previas.

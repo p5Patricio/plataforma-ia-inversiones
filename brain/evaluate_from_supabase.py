@@ -7,6 +7,7 @@ from pathlib import Path
 from brain.backtesting import BacktestConfig, run_walk_forward_model_backtest
 from brain.datasets import build_dataset_from_materialized
 from brain.inference import PredictionPolicy
+from brain.models import DEFAULT_MODEL_NAME, available_model_names
 from collector.supabase_repository import SupabaseConfig, SupabaseRepository
 
 
@@ -16,6 +17,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--feature-set", default="technical_v1")
     parser.add_argument("--label-method", choices=["fixed_horizon", "triple_barrier"], default="triple_barrier")
     parser.add_argument("--horizon", type=int, default=5)
+    parser.add_argument("--model-name", choices=available_model_names(), default=DEFAULT_MODEL_NAME)
     parser.add_argument("--splits", type=int, default=5)
     parser.add_argument("--test-size", type=int)
     parser.add_argument("--embargo-rows", type=int, help="Rows skipped between train and test. Defaults to horizon")
@@ -45,6 +47,7 @@ def main() -> None:
         test_size=args.test_size,
         embargo_rows=args.embargo_rows if args.embargo_rows is not None else args.horizon,
         trade_stride=args.trade_stride if args.trade_stride is not None else args.horizon,
+        model_name=args.model_name,
         prediction_policy=PredictionPolicy(min_confidence=args.min_confidence),
         config=BacktestConfig(
             initial_capital=args.initial_capital,
@@ -61,6 +64,7 @@ def main() -> None:
         "feature_set": args.feature_set,
         "label_method": args.label_method,
         "horizon": args.horizon,
+        "model_name": args.model_name,
         "summary": result.summary,
         "folds": result.folds,
         "predictions": result.predictions.to_dict(orient="records"),

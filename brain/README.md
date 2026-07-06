@@ -29,17 +29,24 @@ Este comando:
 ## Entrenamiento desde CSV
 
 ```powershell
-python -m brain.train --prices-csv data/raw/aapl_stooq.csv --model-out models/aapl.joblib --metrics-out reports/aapl_metrics.json
+python -m brain.train --prices-csv data/raw/aapl_stooq.csv --model-out models/aapl.joblib --metrics-out reports/aapl_metrics.json --model-name random_forest
 ```
 
 El entrenamiento usa validacion temporal walk-forward. No usa splits aleatorios.
+
+Modelos disponibles:
+
+- `baseline_hist_gradient_boosting`
+- `logistic_regression`
+- `random_forest`
+- `extra_trees`
 
 ## Entrenamiento desde Supabase
 
 Despues de materializar features y labels:
 
 ```powershell
-python -m brain.train_from_supabase --ticker AAPL --feature-set technical_v1 --label-method triple_barrier --horizon 5
+python -m brain.train_from_supabase --ticker AAPL --feature-set technical_v1 --label-method triple_barrier --horizon 5 --model-name random_forest
 ```
 
 Este comando:
@@ -75,7 +82,7 @@ Las predicciones quedan preparadas para evaluarse contra labels futuros mediante
 Antes de promover un modelo, ejecuta una evaluacion out-of-sample desde Supabase:
 
 ```powershell
-python -m brain.evaluate_from_supabase --ticker BTC-USD --feature-set technical_v1 --label-method triple_barrier --horizon 5 --out reports/btc_walk_forward_backtest.json
+python -m brain.evaluate_from_supabase --ticker BTC-USD --feature-set technical_v1 --label-method triple_barrier --horizon 5 --model-name random_forest --out reports/btc_walk_forward_backtest.json
 ```
 
 Este comando:

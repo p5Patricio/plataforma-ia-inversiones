@@ -8,7 +8,7 @@ from sklearn.model_selection import TimeSeriesSplit
 
 from brain.features import FEATURE_COLUMNS
 from brain.inference import PredictionPolicy, predict_actions
-from brain.models import create_baseline_model
+from brain.models import DEFAULT_MODEL_NAME, create_model
 
 
 TRADE_ACTIONS = {"BUY", "SELL"}
@@ -94,6 +94,7 @@ def run_walk_forward_model_backtest(
     test_size: int | None = None,
     embargo_rows: int = 0,
     trade_stride: int = 1,
+    model_name: str = DEFAULT_MODEL_NAME,
     prediction_policy: PredictionPolicy | None = None,
     config: BacktestConfig | None = None,
 ) -> WalkForwardBacktestResult:
@@ -117,7 +118,7 @@ def run_walk_forward_model_backtest(
     for fold, (train_idx, test_idx) in enumerate(splitter.split(ordered), start=1):
         train = ordered.iloc[train_idx]
         test = ordered.iloc[test_idx].copy()
-        model = create_baseline_model()
+        model = create_model(model_name)
         model.fit(train[FEATURE_COLUMNS], train["label"])
 
         predicted = predict_actions(
@@ -163,6 +164,7 @@ def run_walk_forward_model_backtest(
         "embargo_rows": int(embargo_rows),
         "trade_stride": int(trade_stride),
         "min_confidence": prediction_policy.min_confidence,
+        "model_name": model_name,
         "model": model_backtest.metrics,
         "baselines": {name: result.metrics for name, result in baselines.items()},
     }

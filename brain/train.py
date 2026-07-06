@@ -8,7 +8,13 @@ import joblib
 import pandas as pd
 
 from brain.datasets import build_supervised_dataset
-from brain.models import train_final_model, walk_forward_evaluate
+from brain.models import (
+    DEFAULT_MODEL_NAME,
+    available_model_names,
+    get_model_spec,
+    train_final_model,
+    walk_forward_evaluate,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -23,6 +29,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--buy-threshold", type=float, default=0.015)
     parser.add_argument("--sell-threshold", type=float, default=-0.015)
     parser.add_argument("--splits", type=int, default=5)
+    parser.add_argument("--model-name", choices=available_model_names(), default=DEFAULT_MODEL_NAME)
     return parser.parse_args()
 
 
@@ -39,14 +46,17 @@ def main() -> None:
         sell_threshold=args.sell_threshold,
     )
 
-    evaluation = walk_forward_evaluate(dataset, n_splits=args.splits)
-    model = train_final_model(dataset)
+    evaluation = walk_forward_evaluate(dataset, n_splits=args.splits, model_name=args.model_name)
+    model = train_final_model(dataset, model_name=args.model_name)
+    model_spec = get_model_spec(args.model_name)
 
     model_out = Path(args.model_out)
     model_out.parent.mkdir(parents=True, exist_ok=True)
     joblib.dump(model, model_out)
 
     metrics = {
+        "model_name": args.model_name,
+        "estimator": model_spec.estimator,
         "label_method": args.label_method,
         "horizon": args.horizon,
         "summary": evaluation.summary,

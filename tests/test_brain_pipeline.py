@@ -10,7 +10,7 @@ from brain.feedback import analyze_prediction_feedback
 from brain.features import FEATURE_COLUMNS, build_features
 from brain.inference import PredictionPolicy, predict_actions
 from brain.labeling import BUY, HOLD, SELL, fixed_horizon_labels, triple_barrier_labels
-from brain.models import walk_forward_evaluate
+from brain.models import available_model_names, create_model, walk_forward_evaluate
 from brain.risk import RiskPolicy, apply_risk_policy
 
 
@@ -101,6 +101,30 @@ def test_walk_forward_evaluate_returns_fold_metrics() -> None:
     assert len(result.fold_metrics) == 3
     assert result.summary["rows"] == len(dataset)
     assert 0 <= result.summary["mean_f1_macro"] <= 1
+
+
+def test_model_registry_exposes_comparable_candidates() -> None:
+    names = available_model_names()
+
+    assert "baseline_hist_gradient_boosting" in names
+    assert "logistic_regression" in names
+    assert "random_forest" in names
+    assert create_model("extra_trees").named_steps["classifier"].__class__.__name__ == "ExtraTreesClassifier"
+
+
+def test_walk_forward_evaluate_accepts_registered_model_name() -> None:
+    dataset = build_supervised_dataset(
+        make_prices(140),
+        label_method="fixed_horizon",
+        horizon=3,
+        buy_threshold=0.003,
+        sell_threshold=-0.003,
+    )
+
+    result = walk_forward_evaluate(dataset, n_splits=3, model_name="logistic_regression")
+
+    assert result.summary["model_name"] == "logistic_regression"
+    assert result.summary["estimator"] == "LogisticRegression"
 
 
 def test_build_dataset_from_materialized_expands_feature_json() -> None:
@@ -228,10 +252,12 @@ def test_run_walk_forward_model_backtest_compares_baselines() -> None:
     result = run_walk_forward_model_backtest(
         dataset,
         n_splits=3,
+        model_name="random_forest",
         config=BacktestConfig(initial_capital=1000, fee_bps=5, slippage_bps=5),
     )
 
     assert result.summary["evaluated_rows"] == len(result.predictions)
+    assert result.summary["model_name"] == "random_forest"
     assert result.summary["embargo_rows"] == 0
     assert result.summary["trade_stride"] == 1
     assert len(result.folds) == 3
