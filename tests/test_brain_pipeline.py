@@ -5,6 +5,7 @@ import pandas as pd
 
 from brain.backtesting import BacktestConfig, run_prediction_backtest
 from brain.backtesting import run_confidence_threshold_sweep, run_walk_forward_model_backtest
+from brain.candidate_matrix import run_candidate_matrix
 from brain.datasets import build_dataset_from_materialized, build_supervised_dataset
 from brain.feedback import analyze_prediction_feedback
 from brain.features import FEATURE_COLUMNS, FEATURE_COLUMNS_TECHNICAL_V2, build_features, feature_columns_for_set
@@ -489,6 +490,51 @@ def test_candidate_selection_allows_positive_no_loss_candidate() -> None:
     promotion = evaluate_promotion(summary, PromotionCriteria(min_active_trades=20))
 
     assert promotion["status"] == "pass"
+
+
+def test_run_candidate_matrix_compares_scopes_and_thresholds() -> None:
+    target = AssetDataset(
+        asset_id="btc-id",
+        ticker="BTC-USD",
+        asset_class="crypto",
+        dataset=build_supervised_dataset(
+            make_prices(180),
+            label_method="triple_barrier",
+            horizon=3,
+            profit_take=0.01,
+            stop_loss=0.01,
+        ).assign(asset_id="btc-id", ticker="BTC-USD", asset_class="crypto"),
+    )
+    peer_crypto = AssetDataset(
+        asset_id="eth-id",
+        ticker="ETH-USD",
+        asset_class="crypto",
+        dataset=build_supervised_dataset(
+            make_prices(180).assign(close=lambda frame: frame["close"] * 0.8),
+            label_method="triple_barrier",
+            horizon=3,
+            profit_take=0.01,
+            stop_loss=0.01,
+        ).assign(asset_id="eth-id", ticker="ETH-USD", asset_class="crypto"),
+    )
+
+    matrix = run_candidate_matrix(
+        [target, peer_crypto],
+        target_ticker="BTC-USD",
+        scopes=["local", "global"],
+        model_names=["logistic_regression"],
+        confidence_thresholds=[0.55, 0.65],
+        n_splits=3,
+        trade_stride=3,
+        promotion_criteria=PromotionCriteria(min_active_trades=1),
+    )
+
+    assert len(matrix["results"]) == 4
+    assert matrix["errors"] == []
+    assert len(matrix["ranking"]) == 4
+    assert {row["scope"] for row in matrix["ranking"]} == {"local", "global"}
+    assert {row["min_confidence"] for row in matrix["ranking"]} == {0.55, 0.65}
+    assert all(row["candidate_id"].startswith("BTC-USD::logistic_regression") for row in matrix["ranking"])
 
 
 def test_apply_risk_policy_sizes_confident_trade() -> None:

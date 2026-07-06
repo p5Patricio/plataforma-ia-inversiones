@@ -126,6 +126,22 @@ python -m brain.evaluate_training_scopes_from_supabase --ticker BTC-USD --featur
 
 Este ranking no reemplaza una revision humana: sirve como compuerta automatica para que solo pasen modelos con evidencia suficiente de rentabilidad neta y control de riesgo.
 
+## Buscar candidatos en matriz
+
+Para comparar varios modelos, scopes y umbrales de confianza en una sola corrida:
+
+```powershell
+python -m brain.evaluate_candidate_matrix_from_supabase --ticker BTC-USD --feature-set technical_v2 --label-method triple_barrier --horizon 5 --models logistic_regression,random_forest,extra_trees --confidence-thresholds 0.55,0.60,0.65,0.70 --scopes local,asset_class,global --min-total-return 0.05 --min-profit-factor 1.2 --max-drawdown-floor -0.20 --min-active-trades 20 --drawdown-penalty 1.2 --out reports/btc_candidate_matrix.json
+```
+
+La salida contiene:
+
+- `results`: resumen de cada combinacion evaluada;
+- `ranking`: candidatos ordenados por promocion y `objective_score`;
+- `errors`: combinaciones que fallaron sin detener la corrida completa.
+
+Este comando es el punto de partida para decidir que combinacion de modelo, scope y umbral merece entrenarse como artefacto candidato para predicciones reales.
+
 ### Risk engine
 
 El comando de prediccion tambien aplica reglas de riesgo:

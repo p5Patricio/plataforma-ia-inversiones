@@ -25,6 +25,7 @@ def build_candidate_row(
     objective_score = score_candidate(summary, drawdown_penalty=drawdown_penalty)
 
     return {
+        "candidate_id": summary.get("candidate_id"),
         "scope": summary.get("scope"),
         "target_ticker": summary.get("target_ticker"),
         "model_name": summary.get("model_name"),
