@@ -144,6 +144,25 @@ Si falla DNS o red, la API activa el modo demo local para que el dashboard siga 
 
 ## Jobs Operativos
 
+Para actualizar precios y materializar datasets:
+
+```bash
+python -m collector.run_market_data_job --assets-file assets.json --feature-sets technical_v2 --out reports/market_data_job.json
+```
+
+Para materializar un activo ya cargado en Supabase sin descargar precios:
+
+```bash
+python -m collector.run_market_data_job --skip-collection --tickers BTC-USD --feature-sets technical_v2 --out reports/market_data_job_btc.json
+```
+
+El job de datos:
+
+- descarga precios para los activos configurados;
+- guarda OHLCV normalizado en Supabase;
+- materializa features y labels;
+- reporta errores por activo sin detener todo el proceso, salvo que uses `--fail-fast`.
+
 Para generar predicciones latest desde los modelos promovidos:
 
 ```bash
@@ -175,6 +194,6 @@ python -m brain.run_inference_job --model-name extra_trees --model-version promo
 
 ## Roadmap
 
-- Automatizar ingestion/materializacion con scheduler externo.
+- Conectar jobs operativos a un scheduler externo.
 - Separar modo demo, staging y produccion por configuracion.
 - Agregar autenticacion y perfiles de riesgo por usuario.
