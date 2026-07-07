@@ -13,6 +13,7 @@ on:
         options:
           - market_data
           - inference
+          - paper_trading
           - full
       tickers:
         description: Optional comma-separated stored tickers, for example BTC-USD,AAPL
@@ -110,6 +111,23 @@ jobs:
           fi
           "${CMD[@]}"
           python -c "import json, sys; report=json.load(open('reports/inference_job_latest.json')); sys.exit(1 if report.get('failed', 0) else 0)"
+
+      - name: Run paper trading job
+        if: ${{ env.JOB_MODE == 'paper_trading' || env.JOB_MODE == 'full' }}
+        run: |
+          mkdir -p reports
+          CMD=(python -m brain.run_paper_trading_job --out reports/paper_trading_job.json)
+          if [ -n "$TICKERS" ]; then
+            CMD+=(--tickers "$TICKERS")
+          fi
+          if [ -n "$MODEL_NAME" ]; then
+            CMD+=(--model-name "$MODEL_NAME")
+          fi
+          if [ -n "$MODEL_VERSION" ]; then
+            CMD+=(--model-version "$MODEL_VERSION")
+          fi
+          "${CMD[@]}"
+          python -c "import json, sys; report=json.load(open('reports/paper_trading_job.json')); sys.exit(1 if report.get('failed', 0) else 0)"
 
       - name: Upload job reports
         if: always()

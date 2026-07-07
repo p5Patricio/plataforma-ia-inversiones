@@ -3,6 +3,7 @@ from __future__ import annotations
 import pandas as pd
 
 from brain.paper_trading import PaperTradingConfig, run_paper_trading
+from brain.paper_trading_job import run_paper_trading_job
 
 
 def test_paper_trading_maintains_position_on_hold_and_marks_equity() -> None:
@@ -90,3 +91,83 @@ def test_paper_trading_empty_predictions_returns_flat_metrics() -> None:
     assert result.metrics["final_equity"] == 10_000
     assert result.metrics["open_position"] == "FLAT"
     assert result.timeline.empty
+
+
+class FakePaperTradingRepository:
+    def __init__(self, predictions: pd.DataFrame | None = None) -> None:
+        self.predictions = predictions if predictions is not None else _prediction_frame()
+        self.created_runs: list[dict] = []
+        self.inserted_events: list[dict] = []
+
+    def get_assets(self) -> list[dict]:
+        return [
+            {"id": "asset-btc", "ticker": "BTC-USD"},
+            {"id": "asset-aapl", "ticker": "AAPL"},
+        ]
+
+    def get_prediction_feedback(self, **kwargs) -> pd.DataFrame:
+        self.feedback_kwargs = kwargs
+        return self.predictions
+
+    def get_prices(self, asset_id: str, limit: int | None = None, ascending: bool = True) -> pd.DataFrame:
+        frame = pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2026-01-01", periods=3, freq="D", tz="UTC"),
+                "close": [100, 110, 121],
+            }
+        )
+        return frame.sort_values("timestamp", ascending=ascending).reset_index(drop=True)
+
+    def create_paper_trading_run(self, **kwargs) -> str:
+        self.created_runs.append(kwargs)
+        return f"paper-run-{len(self.created_runs)}"
+
+    def insert_paper_trading_events(self, paper_trading_run_id: str, asset_id: str | None, timeline: pd.DataFrame) -> int:
+        self.inserted_events.append(
+            {"paper_trading_run_id": paper_trading_run_id, "asset_id": asset_id, "rows": len(timeline)}
+        )
+        return len(timeline)
+
+
+def test_run_paper_trading_job_persists_selected_ticker() -> None:
+    repository = FakePaperTradingRepository()
+
+    report = run_paper_trading_job(
+        repository,
+        tickers=["BTC-USD"],
+        limit=3,
+        config=PaperTradingConfig(initial_capital=1000, fee_bps=0, slippage_bps=0),
+    )
+
+    assert report["attempted"] == 1
+    assert report["succeeded"] == 1
+    assert report["failed"] == 0
+    assert repository.created_runs[0]["asset_id"] == "asset-btc"
+    assert repository.created_runs[0]["model_run_id"] == "run-1"
+    assert repository.created_runs[0]["metrics"]["trade_count"] == 1
+    assert repository.inserted_events[0]["rows"] == 3
+
+
+def test_run_paper_trading_job_skips_empty_predictions_by_default() -> None:
+    repository = FakePaperTradingRepository(predictions=pd.DataFrame())
+
+    report = run_paper_trading_job(repository, tickers=["AAPL"], limit=3)
+
+    assert report["attempted"] == 1
+    assert report["succeeded"] == 0
+    assert report["skipped"] == [{"ticker": "AAPL", "asset_id": "asset-aapl", "reason": "no_predictions"}]
+    assert repository.created_runs == []
+
+
+def _prediction_frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2026-01-01", periods=3, freq="D", tz="UTC"),
+            "predicted_action": ["BUY", "HOLD", "HOLD"],
+            "confidence": [0.8, 0.5, 0.5],
+            "model_name": ["extra_trees", "extra_trees", "extra_trees"],
+            "model_version": ["v1", "v1", "v1"],
+            "model_run_id": ["run-1", "run-1", "run-1"],
+            "metadata": [{"risk": {"position_size": 0.5}}, {}, {}],
+        }
+    )

@@ -180,6 +180,12 @@ curl "http://127.0.0.1:8000/api/paper-trading-runs/BTC-USD?limit=10"
 
 En el dashboard, el panel de paper trading permite guardar la corrida actual y comparar las corridas persistidas por retorno, drawdown, trades, equity y modelo.
 
+Para persistir corridas periodicas por ticker desde un scheduler:
+
+```bash
+python -m brain.run_paper_trading_job --tickers BTC-USD,AAPL --out reports/paper_trading_job.json
+```
+
 ## Jobs Operativos
 
 Para actualizar precios y materializar datasets:
@@ -216,6 +222,8 @@ El job:
 - aplica reglas de riesgo;
 - guarda la prediccion en Supabase.
 
+El job de paper trading persiste simulaciones de las predicciones guardadas en `paper_trading_runs` y `paper_trading_events`, y alimenta el comparativo del dashboard.
+
 Si el job corre fuera de tu maquina, el `model_run` debe apuntar a un artefacto remoto:
 
 ```bash
@@ -235,7 +243,7 @@ python -m brain.run_inference_job --model-name extra_trees --model-version promo
 El repositorio incluye `.github/workflows/operational-jobs.yml` para ejecutar jobs desde GitHub Actions:
 
 - `schedule`: corre todos los dias a las 06:20 UTC y actualiza datos/features con `config/assets.core.json`.
-- `workflow_dispatch`: permite lanzar `market_data`, `inference` o `full` manualmente.
+- `workflow_dispatch`: permite lanzar `market_data`, `inference`, `paper_trading` o `full` manualmente.
 - `tickers`: permite limitar una corrida a instrumentos concretos, por ejemplo `BTC-USD,AAPL`.
 - `skip_collection`: materializa features y labels usando precios ya guardados.
 
