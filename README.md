@@ -196,6 +196,16 @@ curl "http://127.0.0.1:8000/api/feedback/BTC-USD?limit=250"
 
 El dashboard muestra este resumen en `Calidad del modelo` para detectar degradacion, sesgos por accion y necesidad de reentrenamiento.
 
+## Salud Operativa
+
+Para revisar API, Supabase y esquema requerido:
+
+```bash
+curl "http://127.0.0.1:8000/api/health"
+```
+
+El dashboard muestra el estado en el panel `Sistema`.
+
 ## Jobs Operativos
 
 Para actualizar precios y materializar datasets:

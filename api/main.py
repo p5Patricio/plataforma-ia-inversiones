@@ -15,6 +15,7 @@ from brain.feedback import analyze_prediction_feedback
 from brain.logic import generate_signals
 from brain.paper_trading import PaperTradingConfig, run_paper_trading
 from brain.risk import RiskPolicy, apply_risk_policy
+from collector.schema_check import check_relations
 from collector.supabase_repository import SupabaseConfig, SupabaseRepository
 
 
@@ -79,6 +80,40 @@ def get_optional_user_id(
 @app.get("/")
 def read_root():
     return {"message": "API de Plataforma IA Inversiones funcionando"}
+
+
+@app.get("/api/health")
+def get_health(
+    include_schema: bool = Query(default=True),
+    repository: SupabaseRepository | None = Depends(get_repository),
+    config: AppConfig = Depends(get_app_config),
+):
+    checks = {
+        "api": {"status": "ok"},
+        "supabase": {"status": "ok" if repository is not None else "unavailable"},
+    }
+    status = "ok" if repository is not None else "degraded"
+
+    if include_schema and repository is not None:
+        relation_statuses = check_relations(repository)
+        missing = [item for item in relation_statuses if not item.available]
+        checks["schema"] = {
+            "status": "ok" if not missing else "missing_relations",
+            "missing": [item.name for item in missing],
+            "relations": {item.name: item.available for item in relation_statuses},
+        }
+        if missing:
+            status = "degraded"
+    elif include_schema:
+        checks["schema"] = {"status": "skipped", "reason": "supabase_unavailable"}
+
+    return {
+        "status": status,
+        "environment": config.environment,
+        "allow_demo_fallback": config.allow_demo_fallback,
+        "checks": checks,
+        "timestamp": datetime.now(tz=UTC).isoformat(),
+    }
 
 
 @app.get("/api/assets")

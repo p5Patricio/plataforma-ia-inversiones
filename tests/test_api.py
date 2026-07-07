@@ -311,6 +311,35 @@ def test_assets_endpoint_returns_repository_assets() -> None:
     assert response.json()[0]["ticker"] == "AAPL"
 
 
+def test_health_endpoint_reports_ready_api_without_schema_check() -> None:
+    override_repository(FakeRepository())
+    client = TestClient(app)
+
+    response = client.get("/api/health?include_schema=false")
+
+    clear_overrides()
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["checks"]["api"]["status"] == "ok"
+    assert payload["checks"]["supabase"]["status"] == "ok"
+    assert "schema" not in payload["checks"]
+
+
+def test_health_endpoint_reports_degraded_without_supabase() -> None:
+    app.dependency_overrides[get_repository] = lambda: None
+    client = TestClient(app)
+
+    response = client.get("/api/health")
+
+    clear_overrides()
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "degraded"
+    assert payload["checks"]["supabase"]["status"] == "unavailable"
+    assert payload["checks"]["schema"]["reason"] == "supabase_unavailable"
+
+
 def test_analysis_endpoint_prefers_latest_prediction() -> None:
     override_repository(
         FakeRepository(

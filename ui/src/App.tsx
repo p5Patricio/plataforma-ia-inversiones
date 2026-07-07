@@ -125,6 +125,14 @@ interface FeedbackGroupRow {
   total_outcome_return?: number | null;
 }
 
+interface SystemHealthResponse {
+  status: 'ok' | 'degraded' | string;
+  environment: string;
+  allow_demo_fallback: boolean;
+  timestamp: string;
+  checks: Record<string, { status?: string; reason?: string; missing?: string[] }>;
+}
+
 interface BacktestSummaryRow {
   id?: string;
   name?: string;
@@ -249,6 +257,8 @@ function App() {
   const [authPassword, setAuthPassword] = useState('');
   const [authBusy, setAuthBusy] = useState(false);
   const [authMessage, setAuthMessage] = useState<string | null>(null);
+  const [systemHealth, setSystemHealth] = useState<SystemHealthResponse | null>(null);
+  const [healthLoading, setHealthLoading] = useState(false);
   const [riskProfile, setRiskProfile] = useState<RiskProfileResponse | null>(null);
   const [riskDraft, setRiskDraft] = useState<RiskProfile>(DEFAULT_RISK_PROFILE);
   const [riskScopeType, setRiskScopeType] = useState<RiskProfileScopeType>('default');
@@ -331,6 +341,18 @@ function App() {
       setLoading(false);
     }
   }, [requestConfig]);
+
+  const fetchSystemHealth = useCallback(async () => {
+    setHealthLoading(true);
+    try {
+      const response = await axios.get<SystemHealthResponse>(`${API_BASE_URL}/health`);
+      setSystemHealth(response.data);
+    } catch {
+      setSystemHealth(null);
+    } finally {
+      setHealthLoading(false);
+    }
+  }, []);
 
   const persistPaperTrading = useCallback(async () => {
     if (!selectedTicker || paperSaving) {
@@ -447,13 +469,14 @@ function App() {
     queueMicrotask(() => {
       if (!disposed) {
         void fetchAssets();
+        void fetchSystemHealth();
       }
     });
 
     return () => {
       disposed = true;
     };
-  }, [fetchAssets]);
+  }, [fetchAssets, fetchSystemHealth]);
 
   useEffect(() => {
     if (!selectedTicker) {
@@ -558,6 +581,8 @@ function App() {
             onSubmit={handleAuthSubmit}
             session={session}
           />
+
+          <SystemHealthPanel health={systemHealth} loading={healthLoading} onRefresh={fetchSystemHealth} />
 
           <section className="rounded-lg border border-white/10 bg-[#181b1a] p-3">
             <div className="mb-3 flex items-center justify-between">
@@ -771,6 +796,52 @@ function AccountPanel({
       )}
 
       {authMessage && <p className="mt-3 text-sm text-zinc-400">{authMessage}</p>}
+    </section>
+  );
+}
+
+function SystemHealthPanel({
+  health,
+  loading,
+  onRefresh,
+}: {
+  health: SystemHealthResponse | null;
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  const status = health?.status ?? 'unknown';
+  const isOk = status === 'ok';
+  const missing = health?.checks.schema?.missing ?? [];
+
+  return (
+    <section className="rounded-lg border border-white/10 bg-[#181b1a] p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          {isOk ? (
+            <CheckCircle2 aria-hidden="true" className="h-4 w-4 text-emerald-300" />
+          ) : (
+            <AlertTriangle aria-hidden="true" className="h-4 w-4 text-amber-300" />
+          )}
+          <h2 className="text-sm font-medium text-zinc-100">Sistema</h2>
+        </div>
+        <button
+          type="button"
+          onClick={onRefresh}
+          className="inline-flex h-8 w-8 items-center justify-center rounded-md border border-white/10 text-zinc-300 transition hover:bg-white/5"
+          aria-label="Revisar sistema"
+          title="Revisar"
+        >
+          <RefreshCcw aria-hidden="true" className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+        </button>
+      </div>
+
+      <div className="space-y-2 text-sm">
+        <InfoRow label="Estado" value={isOk ? 'Listo' : status === 'unknown' ? 'Sin lectura' : 'Revisar'} />
+        <InfoRow label="Entorno" value={health?.environment ?? 'N/D'} />
+        <InfoRow label="Supabase" value={health?.checks.supabase?.status ?? 'N/D'} />
+        <InfoRow label="Schema" value={health?.checks.schema?.status ?? 'N/D'} />
+      </div>
+      {missing.length > 0 ? <p className="mt-3 text-xs text-amber-200">Faltan: {missing.join(', ')}</p> : null}
     </section>
   );
 }
