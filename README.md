@@ -257,7 +257,7 @@ curl -X PUT http://127.0.0.1:8000/api/risk-profile \
 
 Sin token, `GET /api/risk-profile` devuelve la politica conservadora por defecto. Para persistencia por usuario aplica `supabase/migrations/20260707000100_user_risk_profiles.sql` y luego `supabase/migrations/20260707000200_scoped_user_risk_profiles.sql`.
 
-El frontend activa login y edicion del perfil cuando `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY` estan configuradas.
+El frontend activa login y edicion del perfil cuando `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY` estan configuradas. Desde el panel `Perfil`, el usuario puede alternar entre editar el perfil global, el de la clase del activo seleccionado o el del ticker seleccionado.
 
 Cuando el dashboard llama `GET /api/analysis/{ticker}` con un token de usuario, la API conserva la prediccion versionada del modelo pero recalcula la accion final, el tamano de posicion, stop, objetivo y bloqueos con el perfil de riesgo autenticado. Esto permite que dos usuarios vean la misma prediccion base con decisiones operativas distintas segun sus limites.
 

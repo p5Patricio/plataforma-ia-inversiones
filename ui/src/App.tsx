@@ -28,6 +28,7 @@ import { isSupabaseAuthConfigured, supabase, type Session } from './lib/supabase
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api').replace(/\/$/, '');
 
 type Signal = 'BUY' | 'SELL' | 'HOLD' | string;
+type RiskProfileScopeType = 'default' | 'asset_class' | 'ticker';
 
 interface Asset {
   id: string;
@@ -122,6 +123,8 @@ interface BacktestSummaryRow {
 
 interface RiskProfile {
   name: string;
+  scope_type?: RiskProfileScopeType | string;
+  scope_value?: string;
   max_position_size: number;
   min_confidence_to_trade: number;
   max_expected_risk: number;
@@ -137,6 +140,8 @@ interface RiskProfileResponse {
 
 const DEFAULT_RISK_PROFILE: RiskProfile = {
   name: 'default',
+  scope_type: 'default',
+  scope_value: '',
   max_position_size: 0.1,
   min_confidence_to_trade: 0.6,
   max_expected_risk: 0.05,
@@ -162,6 +167,7 @@ function App() {
   const [authMessage, setAuthMessage] = useState<string | null>(null);
   const [riskProfile, setRiskProfile] = useState<RiskProfileResponse | null>(null);
   const [riskDraft, setRiskDraft] = useState<RiskProfile>(DEFAULT_RISK_PROFILE);
+  const [riskScopeType, setRiskScopeType] = useState<RiskProfileScopeType>('default');
   const [riskStatus, setRiskStatus] = useState<string | null>(null);
   const [riskSaving, setRiskSaving] = useState(false);
   const accessToken = session?.access_token;
@@ -170,6 +176,21 @@ function App() {
     () => (accessToken ? { headers: { Authorization: `Bearer ${accessToken}` } } : undefined),
     [accessToken],
   );
+
+  const selectedAsset = useMemo(
+    () => assets.find((asset) => asset.ticker === selectedTicker),
+    [assets, selectedTicker],
+  );
+
+  const riskScopeValue = useMemo(() => {
+    if (riskScopeType === 'ticker') {
+      return selectedAsset?.ticker ?? selectedTicker;
+    }
+    if (riskScopeType === 'asset_class') {
+      return selectedAsset?.asset_class?.toLowerCase() ?? '';
+    }
+    return '';
+  }, [riskScopeType, selectedAsset?.asset_class, selectedAsset?.ticker, selectedTicker]);
 
   const fetchAssets = useCallback(async () => {
     try {
@@ -206,18 +227,30 @@ function App() {
     }
   }, [requestConfig]);
 
-  const fetchRiskProfile = useCallback(async (activeSession: Session | null) => {
+  const fetchRiskProfile = useCallback(async (activeSession: Session | null, scopeType: RiskProfileScopeType, scopeValue: string) => {
     const config = activeSession?.access_token
       ? { headers: { Authorization: `Bearer ${activeSession.access_token}` } }
       : undefined;
+    const params = new URLSearchParams({ scope_type: scopeType });
+    if (scopeValue) {
+      params.set('scope_value', scopeValue);
+    }
     try {
-      const response = await axios.get<RiskProfileResponse>(`${API_BASE_URL}/risk-profile`, config);
+      const response = await axios.get<RiskProfileResponse>(`${API_BASE_URL}/risk-profile?${params}`, config);
+      const profile =
+        response.data.source === 'default' && scopeType !== 'default'
+          ? { ...response.data.profile, name: scopeValue || scopeType, scope_type: scopeType, scope_value: scopeValue }
+          : response.data.profile;
       setRiskProfile(response.data);
-      setRiskDraft(response.data.profile);
-      setRiskStatus(null);
+      setRiskDraft(profile);
+      setRiskStatus(
+        response.data.source === 'default' && scopeType !== 'default'
+          ? 'Sin perfil especifico; guarda para crearlo.'
+          : null,
+      );
     } catch {
       setRiskProfile({ source: 'default', profile: DEFAULT_RISK_PROFILE });
-      setRiskDraft(DEFAULT_RISK_PROFILE);
+      setRiskDraft({ ...DEFAULT_RISK_PROFILE, scope_type: scopeType, scope_value: scopeValue });
       setRiskStatus('No se pudo cargar el perfil.');
     }
   }, []);
@@ -267,7 +300,8 @@ function App() {
     setRiskSaving(true);
     setRiskStatus(null);
     try {
-      const response = await axios.put<RiskProfileResponse>(`${API_BASE_URL}/risk-profile`, riskDraft, requestConfig);
+      const payload = { ...riskDraft, scope_type: riskScopeType, scope_value: riskScopeValue };
+      const response = await axios.put<RiskProfileResponse>(`${API_BASE_URL}/risk-profile`, payload, requestConfig);
       setRiskProfile(response.data);
       setRiskDraft(response.data.profile);
       setRiskStatus('Perfil guardado.');
@@ -276,7 +310,7 @@ function App() {
     } finally {
       setRiskSaving(false);
     }
-  }, [accessToken, requestConfig, riskDraft]);
+  }, [accessToken, requestConfig, riskDraft, riskScopeType, riskScopeValue]);
 
   useEffect(() => {
     let disposed = false;
@@ -336,19 +370,14 @@ function App() {
     let disposed = false;
     queueMicrotask(() => {
       if (!disposed) {
-        void fetchRiskProfile(session);
+        void fetchRiskProfile(session, riskScopeType, riskScopeValue);
       }
     });
 
     return () => {
       disposed = true;
     };
-  }, [fetchRiskProfile, session]);
-
-  const selectedAsset = useMemo(
-    () => assets.find((asset) => asset.ticker === selectedTicker),
-    [assets, selectedTicker],
-  );
+  }, [fetchRiskProfile, riskScopeType, riskScopeValue, session]);
 
   const analysis = analysisResponse?.analysis ?? null;
 
@@ -445,11 +474,15 @@ function App() {
           </section>
 
           <RiskProfilePanel
+            asset={selectedAsset}
             draft={riskDraft}
             onChange={updateRiskDraft}
             onSave={saveRiskProfile}
+            onScopeChange={setRiskScopeType}
             saving={riskSaving}
             session={session}
+            scopeType={riskScopeType}
+            scopeValue={riskScopeValue}
             source={riskProfile?.source ?? 'default'}
             status={riskStatus}
           />
@@ -605,22 +638,33 @@ function AccountPanel({
 }
 
 function RiskProfilePanel({
+  asset,
   draft,
   onChange,
   onSave,
+  onScopeChange,
   saving,
   session,
+  scopeType,
+  scopeValue,
   source,
   status,
 }: {
+  asset?: Asset;
   draft: RiskProfile;
   onChange: (field: keyof RiskProfile, value: number | string | boolean) => void;
   onSave: () => void;
+  onScopeChange: (scopeType: RiskProfileScopeType) => void;
   saving: boolean;
   session: Session | null;
+  scopeType: RiskProfileScopeType;
+  scopeValue: string;
   source: string;
   status: string | null;
 }) {
+  const canUseAssetClass = Boolean(asset?.asset_class);
+  const canUseTicker = Boolean(asset?.ticker);
+
   return (
     <section className="rounded-lg border border-white/10 bg-[#181b1a] p-4">
       <div className="mb-3 flex items-center justify-between gap-3">
@@ -632,6 +676,26 @@ function RiskProfilePanel({
       </div>
 
       <div className="space-y-3">
+        <div>
+          <p className="mb-2 text-xs text-zinc-500">Alcance</p>
+          <div className="grid grid-cols-3 gap-1 rounded-lg bg-black/20 p-1">
+            <ScopeButton active={scopeType === 'default'} label="Default" onClick={() => onScopeChange('default')} />
+            <ScopeButton
+              active={scopeType === 'asset_class'}
+              disabled={!canUseAssetClass}
+              label={asset?.asset_class ?? 'Clase'}
+              onClick={() => onScopeChange('asset_class')}
+            />
+            <ScopeButton
+              active={scopeType === 'ticker'}
+              disabled={!canUseTicker}
+              label={asset?.ticker ?? 'Ticker'}
+              onClick={() => onScopeChange('ticker')}
+            />
+          </div>
+          <p className="mt-2 truncate text-xs text-zinc-500">{scopeLabel(scopeType, scopeValue)}</p>
+        </div>
+
         <label className="block text-xs text-zinc-500">
           Nombre
           <input
@@ -672,6 +736,38 @@ function RiskProfilePanel({
       {status && <p className="mt-3 text-sm text-zinc-400">{status}</p>}
     </section>
   );
+}
+
+function ScopeButton({
+  active,
+  disabled,
+  label,
+  onClick,
+}: {
+  active: boolean;
+  disabled?: boolean;
+  label: string;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className={`h-8 min-w-0 truncate rounded-md px-2 text-xs transition ${
+        active ? 'bg-sky-300/15 text-sky-100' : 'text-zinc-400 hover:text-zinc-100'
+      } disabled:cursor-not-allowed disabled:opacity-40`}
+      title={label}
+    >
+      {label}
+    </button>
+  );
+}
+
+function scopeLabel(scopeType: RiskProfileScopeType, scopeValue: string) {
+  if (scopeType === 'ticker') return `Ticker ${scopeValue || 'sin activo'}`;
+  if (scopeType === 'asset_class') return `Clase ${scopeValue || 'sin clase'}`;
+  return 'Perfil global del usuario';
 }
 
 function PercentField({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) {
