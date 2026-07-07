@@ -74,6 +74,8 @@ API_CORS_ORIGINS=*
 SUPABASE_URL=https://tu-proyecto.supabase.co
 SUPABASE_KEY=tu-clave-server-side-local
 VITE_API_BASE_URL=http://localhost:8000/api
+VITE_SUPABASE_URL=https://tu-proyecto.supabase.co
+VITE_SUPABASE_ANON_KEY=tu-clave-publica-anon
 ```
 
 `SUPABASE_KEY` se usa solo en backend, ingestion, entrenamiento e inferencia. No debe exponerse en el frontend ni subirse al repositorio; para ambientes con RLS activado usa una clave server-side creada para el pipeline.
@@ -86,6 +88,8 @@ Variables de entorno principales:
 | `ALLOW_DEMO_FALLBACK` | Permite servir datos demo si Supabase no esta disponible. Por defecto es `true` fuera de produccion y `false` en `production`. |
 | `API_CORS_ORIGINS` | Lista separada por comas de origenes permitidos por la API. |
 | `VITE_API_BASE_URL` | URL base que usa el frontend para llamar a la API. |
+| `VITE_SUPABASE_URL` | URL publica del proyecto Supabase usada por Supabase Auth en el frontend. |
+| `VITE_SUPABASE_ANON_KEY` | Clave anon/public de Supabase para login del usuario; no uses una service role key aqui. |
 
 3. Instala dependencias:
 
@@ -242,6 +246,8 @@ curl -X PUT http://127.0.0.1:8000/api/risk-profile \
 
 Sin token, `GET /api/risk-profile` devuelve la politica conservadora por defecto. Para persistencia por usuario aplica `supabase/migrations/20260707000100_user_risk_profiles.sql`.
 
+El frontend activa login y edicion del perfil cuando `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY` estan configuradas.
+
 ## Seguridad Para Repos Publicos
 
 - No publiques `.env`.
@@ -252,5 +258,4 @@ Sin token, `GET /api/risk-profile` devuelve la politica conservadora por defecto
 
 ## Roadmap
 
-- Conectar login de Supabase Auth en el frontend.
 - Aplicar perfiles de riesgo de usuario durante inferencia personalizada.

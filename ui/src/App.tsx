@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import axios from 'axios';
 import {
   Activity,
@@ -10,14 +10,20 @@ import {
   Clock3,
   Gauge,
   History,
+  LogIn,
+  LogOut,
   MinusCircle,
   RefreshCcw,
+  Save,
   ShieldCheck,
+  SlidersHorizontal,
   TrendingDown,
   TrendingUp,
+  UserCircle,
   type LucideIcon,
 } from 'lucide-react';
 import { FinancialChart, type PricePoint } from './components/FinancialChart';
+import { isSupabaseAuthConfigured, supabase, type Session } from './lib/supabase';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api').replace(/\/$/, '');
 
@@ -111,6 +117,31 @@ interface BacktestSummaryRow {
   model?: ModelMetadata;
 }
 
+interface RiskProfile {
+  name: string;
+  max_position_size: number;
+  min_confidence_to_trade: number;
+  max_expected_risk: number;
+  stop_loss: number;
+  take_profit: number;
+  allow_short: boolean;
+}
+
+interface RiskProfileResponse {
+  source: 'default' | 'user' | string;
+  profile: RiskProfile;
+}
+
+const DEFAULT_RISK_PROFILE: RiskProfile = {
+  name: 'default',
+  max_position_size: 0.1,
+  min_confidence_to_trade: 0.6,
+  max_expected_risk: 0.05,
+  stop_loss: 0.02,
+  take_profit: 0.04,
+  allow_short: true,
+};
+
 function App() {
   const [assets, setAssets] = useState<Asset[]>([]);
   const [selectedTicker, setSelectedTicker] = useState('');
@@ -120,6 +151,22 @@ function App() {
   const [backtests, setBacktests] = useState<BacktestSummaryRow[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [session, setSession] = useState<Session | null>(null);
+  const [authMode, setAuthMode] = useState<'sign-in' | 'sign-up'>('sign-in');
+  const [authEmail, setAuthEmail] = useState('');
+  const [authPassword, setAuthPassword] = useState('');
+  const [authBusy, setAuthBusy] = useState(false);
+  const [authMessage, setAuthMessage] = useState<string | null>(null);
+  const [riskProfile, setRiskProfile] = useState<RiskProfileResponse | null>(null);
+  const [riskDraft, setRiskDraft] = useState<RiskProfile>(DEFAULT_RISK_PROFILE);
+  const [riskStatus, setRiskStatus] = useState<string | null>(null);
+  const [riskSaving, setRiskSaving] = useState(false);
+  const accessToken = session?.access_token;
+
+  const requestConfig = useMemo(
+    () => (accessToken ? { headers: { Authorization: `Bearer ${accessToken}` } } : undefined),
+    [accessToken],
+  );
 
   const fetchAssets = useCallback(async () => {
     try {
@@ -136,13 +183,13 @@ function App() {
     setError(null);
     try {
       const [pricesResponse, analysisResponse, historyResponse, backtestsResponse] = await Promise.all([
-        axios.get<PricePoint[]>(`${API_BASE_URL}/prices/${ticker}?limit=240`),
-        axios.get<AnalysisResponse>(`${API_BASE_URL}/analysis/${ticker}`),
+        axios.get<PricePoint[]>(`${API_BASE_URL}/prices/${ticker}?limit=240`, requestConfig),
+        axios.get<AnalysisResponse>(`${API_BASE_URL}/analysis/${ticker}`, requestConfig),
         axios
-          .get<PredictionAuditRow[]>(`${API_BASE_URL}/predictions/${ticker}?limit=8`)
+          .get<PredictionAuditRow[]>(`${API_BASE_URL}/predictions/${ticker}?limit=8`, requestConfig)
           .catch(() => ({ data: [] as PredictionAuditRow[] })),
         axios
-          .get<BacktestSummaryRow[]>(`${API_BASE_URL}/backtests/${ticker}?limit=5`)
+          .get<BacktestSummaryRow[]>(`${API_BASE_URL}/backtests/${ticker}?limit=5`, requestConfig)
           .catch(() => ({ data: [] as BacktestSummaryRow[] })),
       ]);
       setPrices(pricesResponse.data);
@@ -154,7 +201,79 @@ function App() {
     } finally {
       setLoading(false);
     }
+  }, [requestConfig]);
+
+  const fetchRiskProfile = useCallback(async (activeSession: Session | null) => {
+    const config = activeSession?.access_token
+      ? { headers: { Authorization: `Bearer ${activeSession.access_token}` } }
+      : undefined;
+    try {
+      const response = await axios.get<RiskProfileResponse>(`${API_BASE_URL}/risk-profile`, config);
+      setRiskProfile(response.data);
+      setRiskDraft(response.data.profile);
+      setRiskStatus(null);
+    } catch {
+      setRiskProfile({ source: 'default', profile: DEFAULT_RISK_PROFILE });
+      setRiskDraft(DEFAULT_RISK_PROFILE);
+      setRiskStatus('No se pudo cargar el perfil.');
+    }
   }, []);
+
+  const handleAuthSubmit = useCallback(
+    async (event: FormEvent<HTMLFormElement>) => {
+      event.preventDefault();
+      if (!supabase) {
+        return;
+      }
+      setAuthBusy(true);
+      setAuthMessage(null);
+      const credentials = { email: authEmail.trim(), password: authPassword };
+      const { error: authError } =
+        authMode === 'sign-in'
+          ? await supabase.auth.signInWithPassword(credentials)
+          : await supabase.auth.signUp(credentials);
+
+      setAuthBusy(false);
+      if (authError) {
+        setAuthMessage(authError.message);
+        return;
+      }
+      setAuthPassword('');
+      setAuthMessage(authMode === 'sign-in' ? 'Sesion iniciada.' : 'Revisa tu correo.');
+    },
+    [authEmail, authMode, authPassword],
+  );
+
+  const handleSignOut = useCallback(async () => {
+    if (!supabase) {
+      return;
+    }
+    await supabase.auth.signOut();
+    setAuthMessage('Sesion cerrada.');
+  }, []);
+
+  const updateRiskDraft = useCallback((field: keyof RiskProfile, value: number | string | boolean) => {
+    setRiskDraft((current) => ({ ...current, [field]: value }));
+  }, []);
+
+  const saveRiskProfile = useCallback(async () => {
+    if (!accessToken) {
+      setRiskStatus('Inicia sesion para guardar.');
+      return;
+    }
+    setRiskSaving(true);
+    setRiskStatus(null);
+    try {
+      const response = await axios.put<RiskProfileResponse>(`${API_BASE_URL}/risk-profile`, riskDraft, requestConfig);
+      setRiskProfile(response.data);
+      setRiskDraft(response.data.profile);
+      setRiskStatus('Perfil guardado.');
+    } catch {
+      setRiskStatus('No se pudo guardar.');
+    } finally {
+      setRiskSaving(false);
+    }
+  }, [accessToken, requestConfig, riskDraft]);
 
   useEffect(() => {
     let disposed = false;
@@ -185,6 +304,43 @@ function App() {
       disposed = true;
     };
   }, [fetchData, selectedTicker]);
+
+  useEffect(() => {
+    if (!supabase) {
+      return;
+    }
+
+    let disposed = false;
+    void supabase.auth.getSession().then(({ data }) => {
+      if (!disposed) {
+        setSession(data.session);
+      }
+    });
+
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      setSession(nextSession);
+    });
+
+    return () => {
+      disposed = true;
+      subscription.unsubscribe();
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    queueMicrotask(() => {
+      if (!disposed) {
+        void fetchRiskProfile(session);
+      }
+    });
+
+    return () => {
+      disposed = true;
+    };
+  }, [fetchRiskProfile, session]);
 
   const selectedAsset = useMemo(
     () => assets.find((asset) => asset.ticker === selectedTicker),
@@ -226,6 +382,21 @@ function App() {
 
       <main className="mx-auto grid max-w-7xl grid-cols-1 gap-5 px-4 py-5 md:px-6 lg:grid-cols-[280px_1fr]">
         <aside className="space-y-4">
+          <AccountPanel
+            authBusy={authBusy}
+            authEmail={authEmail}
+            authMessage={authMessage}
+            authMode={authMode}
+            authPassword={authPassword}
+            configured={isSupabaseAuthConfigured}
+            onAuthModeChange={setAuthMode}
+            onEmailChange={setAuthEmail}
+            onPasswordChange={setAuthPassword}
+            onSignOut={handleSignOut}
+            onSubmit={handleAuthSubmit}
+            session={session}
+          />
+
           <section className="rounded-lg border border-white/10 bg-[#181b1a] p-3">
             <div className="mb-3 flex items-center justify-between">
               <h2 className="text-sm font-medium text-zinc-200">Activos</h2>
@@ -269,6 +440,16 @@ function App() {
               </div>
             )}
           </section>
+
+          <RiskProfilePanel
+            draft={riskDraft}
+            onChange={updateRiskDraft}
+            onSave={saveRiskProfile}
+            saving={riskSaving}
+            session={session}
+            source={riskProfile?.source ?? 'default'}
+            status={riskStatus}
+          />
         </aside>
 
         <section className="space-y-5">
@@ -304,6 +485,209 @@ function App() {
         </section>
       </main>
     </div>
+  );
+}
+
+function AccountPanel({
+  authBusy,
+  authEmail,
+  authMessage,
+  authMode,
+  authPassword,
+  configured,
+  onAuthModeChange,
+  onEmailChange,
+  onPasswordChange,
+  onSignOut,
+  onSubmit,
+  session,
+}: {
+  authBusy: boolean;
+  authEmail: string;
+  authMessage: string | null;
+  authMode: 'sign-in' | 'sign-up';
+  authPassword: string;
+  configured: boolean;
+  onAuthModeChange: (mode: 'sign-in' | 'sign-up') => void;
+  onEmailChange: (value: string) => void;
+  onPasswordChange: (value: string) => void;
+  onSignOut: () => void;
+  onSubmit: (event: FormEvent<HTMLFormElement>) => void;
+  session: Session | null;
+}) {
+  return (
+    <section className="rounded-lg border border-white/10 bg-[#181b1a] p-4">
+      <div className="mb-3 flex items-center gap-2">
+        <UserCircle aria-hidden="true" className="h-4 w-4 text-emerald-300" />
+        <h2 className="text-sm font-medium text-zinc-100">Cuenta</h2>
+      </div>
+
+      {!configured ? (
+        <div className="rounded-lg border border-amber-300/20 bg-amber-300/10 px-3 py-2 text-sm text-amber-100">
+          Auth pendiente en VITE_SUPABASE_*.
+        </div>
+      ) : session ? (
+        <div className="space-y-3">
+          <p className="truncate text-sm text-zinc-300">{session.user.email ?? 'Sesion activa'}</p>
+          <button
+            type="button"
+            onClick={onSignOut}
+            className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 text-sm text-zinc-100 transition hover:bg-white/[0.08] focus:outline-none focus:ring-2 focus:ring-emerald-300/40"
+          >
+            <LogOut aria-hidden="true" className="h-4 w-4" />
+            Salir
+          </button>
+        </div>
+      ) : (
+        <form className="space-y-3" onSubmit={onSubmit}>
+          <div className="grid grid-cols-2 gap-2 rounded-lg bg-black/20 p-1">
+            <button
+              type="button"
+              onClick={() => onAuthModeChange('sign-in')}
+              className={`h-8 rounded-md text-sm transition ${
+                authMode === 'sign-in' ? 'bg-emerald-300/15 text-emerald-100' : 'text-zinc-400 hover:text-zinc-100'
+              }`}
+            >
+              Entrar
+            </button>
+            <button
+              type="button"
+              onClick={() => onAuthModeChange('sign-up')}
+              className={`h-8 rounded-md text-sm transition ${
+                authMode === 'sign-up' ? 'bg-emerald-300/15 text-emerald-100' : 'text-zinc-400 hover:text-zinc-100'
+              }`}
+            >
+              Crear
+            </button>
+          </div>
+
+          <label className="block text-xs text-zinc-500">
+            Email
+            <input
+              type="email"
+              value={authEmail}
+              onChange={(event) => onEmailChange(event.target.value)}
+              className="mt-1 h-9 w-full rounded-lg border border-white/10 bg-black/20 px-3 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-emerald-300/40"
+              autoComplete="email"
+              required
+            />
+          </label>
+          <label className="block text-xs text-zinc-500">
+            Password
+            <input
+              type="password"
+              value={authPassword}
+              onChange={(event) => onPasswordChange(event.target.value)}
+              className="mt-1 h-9 w-full rounded-lg border border-white/10 bg-black/20 px-3 text-sm text-zinc-100 outline-none transition placeholder:text-zinc-600 focus:border-emerald-300/40"
+              autoComplete={authMode === 'sign-in' ? 'current-password' : 'new-password'}
+              minLength={6}
+              required
+            />
+          </label>
+
+          <button
+            type="submit"
+            disabled={authBusy}
+            className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg bg-emerald-300 px-3 text-sm font-medium text-zinc-950 transition hover:bg-emerald-200 disabled:cursor-not-allowed disabled:opacity-60"
+          >
+            <LogIn aria-hidden="true" className="h-4 w-4" />
+            {authBusy ? 'Procesando' : authMode === 'sign-in' ? 'Entrar' : 'Crear cuenta'}
+          </button>
+        </form>
+      )}
+
+      {authMessage && <p className="mt-3 text-sm text-zinc-400">{authMessage}</p>}
+    </section>
+  );
+}
+
+function RiskProfilePanel({
+  draft,
+  onChange,
+  onSave,
+  saving,
+  session,
+  source,
+  status,
+}: {
+  draft: RiskProfile;
+  onChange: (field: keyof RiskProfile, value: number | string | boolean) => void;
+  onSave: () => void;
+  saving: boolean;
+  session: Session | null;
+  source: string;
+  status: string | null;
+}) {
+  return (
+    <section className="rounded-lg border border-white/10 bg-[#181b1a] p-4">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <SlidersHorizontal aria-hidden="true" className="h-4 w-4 text-sky-300" />
+          <h2 className="text-sm font-medium text-zinc-100">Perfil</h2>
+        </div>
+        <span className="rounded-md bg-black/20 px-2 py-1 text-[11px] uppercase text-zinc-500">{source}</span>
+      </div>
+
+      <div className="space-y-3">
+        <label className="block text-xs text-zinc-500">
+          Nombre
+          <input
+            type="text"
+            value={draft.name}
+            onChange={(event) => onChange('name', event.target.value)}
+            className="mt-1 h-9 w-full rounded-lg border border-white/10 bg-black/20 px-3 text-sm text-zinc-100 outline-none transition focus:border-sky-300/40"
+          />
+        </label>
+
+        <PercentField label="Posicion max" value={draft.max_position_size} onChange={(value) => onChange('max_position_size', value)} />
+        <PercentField label="Confianza min" value={draft.min_confidence_to_trade} onChange={(value) => onChange('min_confidence_to_trade', value)} />
+        <PercentField label="Riesgo max" value={draft.max_expected_risk} onChange={(value) => onChange('max_expected_risk', value)} />
+        <PercentField label="Stop" value={draft.stop_loss} onChange={(value) => onChange('stop_loss', value)} />
+        <PercentField label="Objetivo" value={draft.take_profit} onChange={(value) => onChange('take_profit', value)} />
+
+        <label className="flex items-center justify-between gap-3 rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-zinc-300">
+          Permitir short
+          <input
+            type="checkbox"
+            checked={draft.allow_short}
+            onChange={(event) => onChange('allow_short', event.target.checked)}
+            className="h-4 w-4 accent-emerald-300"
+          />
+        </label>
+
+        <button
+          type="button"
+          onClick={onSave}
+          disabled={!session || saving}
+          className="inline-flex h-9 w-full items-center justify-center gap-2 rounded-lg border border-sky-300/30 bg-sky-300/10 px-3 text-sm font-medium text-sky-100 transition hover:bg-sky-300/15 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <Save aria-hidden="true" className="h-4 w-4" />
+          {saving ? 'Guardando' : 'Guardar perfil'}
+        </button>
+      </div>
+
+      {status && <p className="mt-3 text-sm text-zinc-400">{status}</p>}
+    </section>
+  );
+}
+
+function PercentField({ label, value, onChange }: { label: string; value: number; onChange: (value: number) => void }) {
+  return (
+    <label className="grid grid-cols-[1fr_84px] items-center gap-3 text-xs text-zinc-500">
+      <span>{label}</span>
+      <span className="relative">
+        <input
+          type="number"
+          min="0"
+          max="100"
+          step="1"
+          value={percentInputValue(value)}
+          onChange={(event) => onChange(Number(event.target.value || 0) / 100)}
+          className="h-9 w-full rounded-lg border border-white/10 bg-black/20 pl-3 pr-7 text-right text-sm text-zinc-100 outline-none transition focus:border-sky-300/40"
+        />
+        <span className="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 text-xs text-zinc-500">%</span>
+      </span>
+    </label>
   );
 }
 
@@ -667,6 +1051,11 @@ function probabilityColor(label: string) {
 function formatPercent(value?: number | null) {
   if (value === null || value === undefined || Number.isNaN(value)) return 'N/D';
   return `${(value * 100).toFixed(0)}%`;
+}
+
+function percentInputValue(value: number) {
+  if (Number.isNaN(value)) return 0;
+  return Math.round(value * 100);
 }
 
 function formatNumber(value?: number | null) {
