@@ -186,6 +186,16 @@ Para persistir corridas periodicas por ticker desde un scheduler:
 python -m brain.run_paper_trading_job --tickers BTC-USD,AAPL --out reports/paper_trading_job.json
 ```
 
+## Monitoreo de Predicciones
+
+La API expone calidad historica por activo con accuracy, confianza media y retorno realizado:
+
+```bash
+curl "http://127.0.0.1:8000/api/feedback/BTC-USD?limit=250"
+```
+
+El dashboard muestra este resumen en `Calidad del modelo` para detectar degradacion, sesgos por accion y necesidad de reentrenamiento.
+
 ## Jobs Operativos
 
 Para actualizar precios y materializar datasets:

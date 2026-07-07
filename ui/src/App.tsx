@@ -103,6 +103,28 @@ interface PredictionAuditRow {
   feedback?: FeedbackMetadata;
 }
 
+interface FeedbackSummaryResponse {
+  summary: {
+    evaluated_predictions?: number;
+    accuracy?: number | null;
+    mean_confidence?: number | null;
+    mean_outcome_return?: number | null;
+    total_outcome_return?: number | null;
+  };
+  by_action: FeedbackGroupRow[];
+  by_confidence_bucket: FeedbackGroupRow[];
+}
+
+interface FeedbackGroupRow {
+  action?: Signal | null;
+  bucket?: string | null;
+  count?: number;
+  accuracy?: number | null;
+  mean_confidence?: number | null;
+  mean_outcome_return?: number | null;
+  total_outcome_return?: number | null;
+}
+
 interface BacktestSummaryRow {
   id?: string;
   name?: string;
@@ -213,6 +235,7 @@ function App() {
   const [prices, setPrices] = useState<PricePoint[]>([]);
   const [analysisResponse, setAnalysisResponse] = useState<AnalysisResponse | null>(null);
   const [predictionHistory, setPredictionHistory] = useState<PredictionAuditRow[]>([]);
+  const [feedbackSummary, setFeedbackSummary] = useState<FeedbackSummaryResponse | null>(null);
   const [backtests, setBacktests] = useState<BacktestSummaryRow[]>([]);
   const [paperTrading, setPaperTrading] = useState<PaperTradingResponse | null>(null);
   const [paperTradingRuns, setPaperTradingRuns] = useState<PaperTradingRunRow[]>([]);
@@ -267,12 +290,23 @@ function App() {
     setLoading(true);
     setError(null);
     try {
-      const [pricesResponse, analysisResponse, historyResponse, backtestsResponse, paperTradingResponse, paperRunsResponse] = await Promise.all([
+      const [
+        pricesResponse,
+        analysisResponse,
+        historyResponse,
+        feedbackResponse,
+        backtestsResponse,
+        paperTradingResponse,
+        paperRunsResponse,
+      ] = await Promise.all([
         axios.get<PricePoint[]>(`${API_BASE_URL}/prices/${ticker}?limit=240`, requestConfig),
         axios.get<AnalysisResponse>(`${API_BASE_URL}/analysis/${ticker}`, requestConfig),
         axios
           .get<PredictionAuditRow[]>(`${API_BASE_URL}/predictions/${ticker}?limit=8`, requestConfig)
           .catch(() => ({ data: [] as PredictionAuditRow[] })),
+        axios
+          .get<FeedbackSummaryResponse>(`${API_BASE_URL}/feedback/${ticker}?limit=250`, requestConfig)
+          .catch(() => ({ data: null as FeedbackSummaryResponse | null })),
         axios
           .get<BacktestSummaryRow[]>(`${API_BASE_URL}/backtests/${ticker}?limit=5`, requestConfig)
           .catch(() => ({ data: [] as BacktestSummaryRow[] })),
@@ -286,6 +320,7 @@ function App() {
       setPrices(pricesResponse.data);
       setAnalysisResponse(analysisResponse.data);
       setPredictionHistory(historyResponse.data);
+      setFeedbackSummary(feedbackResponse.data);
       setBacktests(backtestsResponse.data);
       setPaperTrading(paperTradingResponse.data);
       setPaperTradingRuns(paperRunsResponse.data);
@@ -619,6 +654,7 @@ function App() {
             saving={paperSaving}
             status={paperStatus}
           />
+          <FeedbackQualityPanel report={feedbackSummary} />
           <PredictionHistoryPanel rows={predictionHistory} />
         </section>
       </main>
@@ -1336,6 +1372,65 @@ function PaperTradingRunsPanel({ rows }: { rows: PaperTradingRunRow[] }) {
         </div>
       )}
     </div>
+  );
+}
+
+function FeedbackQualityPanel({ report }: { report: FeedbackSummaryResponse | null }) {
+  const summary = report?.summary;
+  const actionRows = report?.by_action ?? [];
+
+  return (
+    <section className="rounded-lg border border-white/10 bg-[#181b1a] p-4">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <ShieldCheck aria-hidden="true" className="h-4 w-4 text-sky-300" />
+          <h2 className="text-sm font-medium text-zinc-100">Calidad del modelo</h2>
+        </div>
+        <span className="text-xs text-zinc-500">{formatCount(summary?.evaluated_predictions)}</span>
+      </div>
+
+      {!report || !summary?.evaluated_predictions ? (
+        <div className="rounded-lg border border-dashed border-white/10 px-3 py-6 text-center text-sm text-zinc-500">
+          Sin feedback evaluado todavia
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
+            <SmallMetric label="Acierto" value={formatPercent(summary.accuracy)} />
+            <SmallMetric label="Confianza" value={formatPercent(summary.mean_confidence)} />
+            <SmallMetric label="Retorno medio" value={formatPercent(summary.mean_outcome_return)} />
+            <SmallMetric label="Retorno total" value={formatPercent(summary.total_outcome_return)} />
+          </div>
+
+          <div className="overflow-hidden rounded-lg border border-white/10">
+            <div className="grid grid-cols-[80px_72px_82px_1fr] gap-3 border-b border-white/10 bg-black/20 px-3 py-2 text-xs text-zinc-500 md:grid-cols-[92px_80px_92px_96px_1fr]">
+              <span>Accion</span>
+              <span>Casos</span>
+              <span>Acierto</span>
+              <span className="hidden md:block">Confianza</span>
+              <span>Retorno</span>
+            </div>
+            <div className="divide-y divide-white/10">
+              {actionRows.map((row) => {
+                const action = row.action ?? 'HOLD';
+                return (
+                  <div
+                    key={action}
+                    className="grid grid-cols-[80px_72px_82px_1fr] gap-3 px-3 py-3 text-sm md:grid-cols-[92px_80px_92px_96px_1fr]"
+                  >
+                    <span className={`font-medium ${signalTone(action).text}`}>{action}</span>
+                    <span className="text-zinc-300">{formatCount(row.count)}</span>
+                    <span className="text-zinc-300">{formatPercent(row.accuracy)}</span>
+                    <span className="hidden text-zinc-300 md:block">{formatPercent(row.mean_confidence)}</span>
+                    <span className={metricTone(row.total_outcome_return)}>{formatPercent(row.total_outcome_return)}</span>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+    </section>
   );
 }
 

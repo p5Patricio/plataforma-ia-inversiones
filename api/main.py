@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from requests import RequestException
 
 from app_config import AppConfig
+from brain.feedback import analyze_prediction_feedback
 from brain.logic import generate_signals
 from brain.paper_trading import PaperTradingConfig, run_paper_trading
 from brain.risk import RiskPolicy, apply_risk_policy
@@ -224,6 +225,39 @@ def get_prediction_history(
         require_demo_ticker(ticker, config)
 
     return []
+
+
+@app.get("/api/feedback/{ticker}")
+def get_feedback_summary(
+    ticker: str,
+    limit: int = Query(default=250, ge=1, le=1000),
+    model_name: str | None = Query(default=None),
+    model_version: str | None = Query(default=None),
+    repository: SupabaseRepository | None = Depends(get_repository),
+    config: AppConfig = Depends(get_app_config),
+):
+    if repository is None:
+        require_demo_ticker(ticker, config)
+        return format_feedback_report(analyze_prediction_feedback(pd.DataFrame()))
+
+    try:
+        asset_id = repository.get_asset_id(ticker)
+        feedback = repository.get_prediction_feedback(
+            asset_id=asset_id,
+            model_name=model_name,
+            model_version=model_version,
+            only_evaluated=True,
+            limit=limit,
+            ascending=False,
+        )
+        return format_feedback_report(analyze_prediction_feedback(feedback))
+    except ValueError:
+        if not should_use_demo_ticker(ticker, config):
+            raise HTTPException(status_code=404, detail="Activo no encontrado") from None
+    except (RuntimeError, RequestException):
+        require_demo_ticker(ticker, config)
+
+    return format_feedback_report(analyze_prediction_feedback(pd.DataFrame()))
 
 
 @app.get("/api/backtests/{ticker}")
@@ -618,6 +652,34 @@ def format_backtest_history_row(backtest: dict) -> dict:
             "label_method": model.get("label_method"),
             "horizon": model.get("horizon"),
         },
+    }
+
+
+def format_feedback_report(report) -> dict:
+    return {
+        "summary": report.summary,
+        "by_action": [
+            {
+                "action": row.get("predicted_action"),
+                "count": row.get("count"),
+                "accuracy": row.get("accuracy"),
+                "mean_confidence": row.get("mean_confidence"),
+                "mean_outcome_return": row.get("mean_outcome_return"),
+                "total_outcome_return": row.get("total_outcome_return"),
+            }
+            for row in report.by_action
+        ],
+        "by_confidence_bucket": [
+            {
+                "bucket": row.get("confidence_bucket"),
+                "count": row.get("count"),
+                "accuracy": row.get("accuracy"),
+                "mean_confidence": row.get("mean_confidence"),
+                "mean_outcome_return": row.get("mean_outcome_return"),
+                "total_outcome_return": row.get("total_outcome_return"),
+            }
+            for row in report.by_confidence_bucket
+        ],
     }
 
 

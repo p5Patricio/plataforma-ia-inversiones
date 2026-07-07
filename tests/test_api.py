@@ -502,6 +502,51 @@ def test_prediction_history_endpoint_returns_empty_demo_history() -> None:
     assert response.json() == []
 
 
+def test_feedback_summary_endpoint_returns_model_quality() -> None:
+    repository = FakeRepository(
+        prediction_feedback=pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2026-01-01", periods=3, freq="D", tz="UTC"),
+                "predicted_action": ["BUY", "SELL", "BUY"],
+                "actual_label": ["BUY", "HOLD", "SELL"],
+                "is_correct": [True, False, False],
+                "confidence": [0.8, 0.7, 0.6],
+                "outcome_return": [0.04, -0.01, -0.02],
+            }
+        )
+    )
+    override_repository(repository)
+    client = TestClient(app)
+
+    response = client.get("/api/feedback/AAPL?limit=3")
+
+    clear_overrides()
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["summary"]["evaluated_predictions"] == 3
+    assert payload["summary"]["accuracy"] == 1 / 3
+    assert payload["by_action"][0]["action"] in {"BUY", "SELL"}
+    assert repository.feedback_kwargs == {
+        "model_name": None,
+        "model_version": None,
+        "asset_id": "asset-1",
+        "only_evaluated": True,
+        "limit": 3,
+        "ascending": False,
+    }
+
+
+def test_feedback_summary_endpoint_returns_empty_demo_report() -> None:
+    app.dependency_overrides[get_repository] = lambda: None
+    client = TestClient(app)
+
+    response = client.get("/api/feedback/BTC-USD")
+
+    clear_overrides()
+    assert response.status_code == 200
+    assert response.json()["summary"]["evaluated_predictions"] == 0
+
+
 def test_backtest_history_endpoint_returns_model_metrics() -> None:
     repository = FakeRepository()
     override_repository(repository)
