@@ -82,6 +82,14 @@ python -m collector.main --assets-file data/assets/universe.json
 python -m collector.main --assets-file data/assets/universe.json --start 2021-01-01 --end 2024-12-31
 ```
 
-## Integracion siguiente
+## Integracion con Supabase
 
-El siguiente paso es crear tablas para `features_daily`, `labels_daily`, `predictions` y `model_runs`, de modo que la ingesta historica pueda alimentar entrenamiento, backtests y senales versionadas.
+El esquema operativo ya vive en `supabase/migrations/`: historicos de mercado, features, labels, corridas de modelo, predicciones, backtests, perfiles de riesgo y paper trading.
+
+Para validar que la base conectada tiene todas las relaciones necesarias:
+
+```powershell
+python -m collector.schema_check
+```
+
+Si falta alguna relacion, aplica las migraciones pendientes y vuelve a ejecutar el chequeo antes de correr ingestion, entrenamiento, inferencia o paper trading.

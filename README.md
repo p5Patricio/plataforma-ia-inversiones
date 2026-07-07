@@ -146,7 +146,7 @@ Esquema ML en Supabase:
 python -m collector.schema_check
 ```
 
-Si falta alguna relacion, aplica `supabase/migrations/20260705000100_ml_pipeline_tables.sql` desde el SQL Editor de Supabase y vuelve a ejecutar el chequeo.
+Si falta alguna relacion, aplica las migraciones pendientes de `supabase/migrations/` desde Supabase SQL Editor o Supabase CLI y vuelve a ejecutar el chequeo.
 
 Si falla DNS o red en desarrollo, la API activa el modo demo local para que el dashboard siga siendo navegable. En produccion, deja `ALLOW_DEMO_FALLBACK=false` para que los fallos de datos se reporten como errores reales en lugar de mostrarse como lecturas sinteticas.
 
