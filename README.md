@@ -80,6 +80,8 @@ VITE_SUPABASE_ANON_KEY=tu-clave-publica-anon
 
 `SUPABASE_KEY` se usa solo en backend, ingestion, entrenamiento e inferencia. No debe exponerse en el frontend ni subirse al repositorio; para ambientes con RLS activado usa una clave server-side creada para el pipeline.
 
+El frontend esta configurado para leer las variables `VITE_*` desde este `.env` de la raiz del repositorio.
+
 Variables de entorno principales:
 
 | Variable | Uso |
