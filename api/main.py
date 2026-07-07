@@ -4,6 +4,7 @@ from datetime import UTC, datetime, timedelta
 from math import cos, sin
 from typing import Annotated
 
+import pandas as pd
 from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -11,7 +12,7 @@ from requests import RequestException
 
 from app_config import AppConfig
 from brain.logic import generate_signals
-from brain.risk import RiskPolicy
+from brain.risk import RiskPolicy, apply_risk_policy
 from collector.supabase_repository import SupabaseConfig, SupabaseRepository
 
 
@@ -121,6 +122,7 @@ def analyze_ticker(
     ticker: str,
     model_name: str | None = Query(default=None),
     model_version: str | None = Query(default=None),
+    user_id: str | None = Depends(get_optional_user_id),
     repository: SupabaseRepository | None = Depends(get_repository),
     config: AppConfig = Depends(get_app_config),
 ):
@@ -146,6 +148,9 @@ def analyze_ticker(
             prediction = None
 
         if prediction:
+            profile = get_user_risk_profile(repository, user_id)
+            if profile:
+                prediction = apply_user_risk_profile_to_prediction(prediction, profile)
             return {
                 "ticker": ticker.upper(),
                 "timestamp": datetime.now(tz=UTC).isoformat(),
@@ -317,6 +322,38 @@ def risk_policy_from_profile(profile: dict | None) -> RiskPolicy:
     )
 
 
+def get_user_risk_profile(repository: SupabaseRepository | None, user_id: str | None) -> dict | None:
+    if repository is None or user_id is None:
+        return None
+    try:
+        return repository.get_default_user_risk_profile(user_id)
+    except (RuntimeError, RequestException):
+        return None
+
+
+def apply_user_risk_profile_to_prediction(prediction: dict, profile: dict) -> dict:
+    metadata = dict(prediction.get("metadata") or {})
+    current_risk = dict(metadata.get("risk") or {})
+    base_action = current_risk.get("pre_risk_action") or prediction.get("predicted_action") or prediction.get("action") or "HOLD"
+    prediction_frame = pd.DataFrame(
+        [
+            {
+                "action": base_action,
+                "confidence": prediction.get("confidence") or 0,
+                "expected_risk": prediction.get("expected_risk"),
+                "metadata": metadata,
+            }
+        ]
+    )
+    adjusted = apply_risk_policy(prediction_frame, risk_policy_from_profile(profile)).iloc[0]
+    adjusted_prediction = dict(prediction)
+    adjusted_prediction["predicted_action"] = adjusted["action"]
+    adjusted_prediction["metadata"] = adjusted["metadata"]
+    adjusted_prediction["metadata"]["risk"]["profile_source"] = "user"
+    adjusted_prediction["metadata"]["risk"]["profile_name"] = profile.get("name", "default")
+    return adjusted_prediction
+
+
 def format_prediction_analysis(prediction: dict) -> dict:
     metadata = prediction.get("metadata") or {}
     risk = metadata.get("risk") or {}
@@ -351,6 +388,8 @@ def format_prediction_analysis(prediction: dict) -> dict:
             "stop_loss": risk.get("stop_loss"),
             "take_profit": risk.get("take_profit"),
             "blocked_reasons": blocked,
+            "profile_source": risk.get("profile_source"),
+            "profile_name": risk.get("profile_name"),
         },
         "feedback": {
             "actual_label": prediction.get("actual_label"),

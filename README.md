@@ -250,6 +250,8 @@ Sin token, `GET /api/risk-profile` devuelve la politica conservadora por defecto
 
 El frontend activa login y edicion del perfil cuando `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY` estan configuradas.
 
+Cuando el dashboard llama `GET /api/analysis/{ticker}` con un token de usuario, la API conserva la prediccion versionada del modelo pero recalcula la accion final, el tamano de posicion, stop, objetivo y bloqueos con el perfil de riesgo autenticado. Esto permite que dos usuarios vean la misma prediccion base con decisiones operativas distintas segun sus limites.
+
 ## Seguridad Para Repos Publicos
 
 - No publiques `.env`.

@@ -224,6 +224,96 @@ def test_analysis_endpoint_prefers_latest_prediction() -> None:
     assert payload["analysis"]["risk"]["position_size"] == 0.05
 
 
+def test_analysis_endpoint_applies_authenticated_risk_profile() -> None:
+    override_repository(
+        FakeRepository(
+            risk_profile={
+                "name": "conservador",
+                "max_position_size": 0.02,
+                "min_confidence_to_trade": 0.80,
+                "max_expected_risk": 0.01,
+                "stop_loss": 0.01,
+                "take_profit": 0.02,
+                "allow_short": True,
+            },
+            prediction={
+                "predicted_action": "BUY",
+                "confidence": 0.72,
+                "expected_risk": 0.02,
+                "probabilities": {"BUY": 0.72, "HOLD": 0.2, "SELL": 0.08},
+                "model_name": "baseline",
+                "model_version": "v1",
+                "model_run_id": "run-1",
+                "feature_set": "technical_v1",
+                "label_method": "triple_barrier",
+                "horizon": 5,
+                "metadata": {"risk": {"position_size": 0.05, "blocked_reasons": [], "pre_risk_action": "BUY"}},
+            },
+        )
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/analysis/AAPL", headers={"Authorization": "Bearer good-token"})
+
+    clear_overrides()
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["source"] == "prediction"
+    assert payload["analysis"]["signal"] == "HOLD"
+    assert payload["analysis"]["risk"]["position_size"] == 0
+    assert payload["analysis"]["risk"]["profile_source"] == "user"
+    assert payload["analysis"]["risk"]["profile_name"] == "conservador"
+    assert set(payload["analysis"]["risk"]["blocked_reasons"]) == {
+        "confidence_below_trade_threshold",
+        "expected_risk_above_limit",
+    }
+
+
+def test_analysis_endpoint_reuses_pre_risk_action_for_user_policy() -> None:
+    override_repository(
+        FakeRepository(
+            risk_profile={
+                "name": "long-only",
+                "max_position_size": 0.05,
+                "min_confidence_to_trade": 0.60,
+                "max_expected_risk": 0.05,
+                "stop_loss": 0.02,
+                "take_profit": 0.04,
+                "allow_short": False,
+            },
+            prediction={
+                "predicted_action": "HOLD",
+                "confidence": 0.91,
+                "expected_risk": 0.02,
+                "probabilities": {"BUY": 0.03, "HOLD": 0.06, "SELL": 0.91},
+                "model_name": "baseline",
+                "model_version": "v1",
+                "model_run_id": "run-1",
+                "feature_set": "technical_v1",
+                "label_method": "triple_barrier",
+                "horizon": 5,
+                "metadata": {
+                    "risk": {
+                        "position_size": 0,
+                        "blocked_reasons": ["short_disabled"],
+                        "pre_risk_action": "SELL",
+                    }
+                },
+            },
+        )
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/analysis/AAPL", headers={"Authorization": "Bearer good-token"})
+
+    clear_overrides()
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["analysis"]["signal"] == "HOLD"
+    assert payload["analysis"]["risk"]["blocked_reasons"] == ["short_disabled"]
+    assert payload["analysis"]["risk"]["profile_name"] == "long-only"
+
+
 def test_analysis_endpoint_falls_back_to_indicator_logic() -> None:
     override_repository(FakeRepository(prediction=None))
     client = TestClient(app)
