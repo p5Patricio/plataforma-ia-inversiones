@@ -20,6 +20,7 @@ REQUIRED_ML_RELATIONS = (
     "backtests",
     "backtest_trades",
     "risk_limits",
+    "user_risk_profiles",
 )
 
 

@@ -1,18 +1,20 @@
 from __future__ import annotations
 
+from typing import Any
+
 import pandas as pd
 
 from collector.supabase_repository import SupabaseConfig, SupabaseRepository
 
 
 class FakeResponse:
-    def __init__(self, payload: list | None = None) -> None:
+    def __init__(self, payload: Any | None = None) -> None:
         self._payload = payload or []
 
     def raise_for_status(self) -> None:
         return None
 
-    def json(self) -> list:
+    def json(self) -> Any:
         return self._payload
 
 
@@ -25,7 +27,7 @@ class FakeSession:
         self.post_calls: list[dict] = []
         self.patch_calls: list[dict] = []
 
-    def get(self, url: str, headers: dict, params: dict, timeout: int) -> FakeResponse:
+    def get(self, url: str, headers: dict, params: dict | None = None, timeout: int = 30) -> FakeResponse:
         self.get_calls.append({"url": url, "headers": headers, "params": params, "timeout": timeout})
         return self.get_responses.pop(0)
 
@@ -72,6 +74,17 @@ def test_get_or_create_asset_returns_existing_asset() -> None:
     assert asset_id == "asset-1"
     assert session.get_calls[0]["params"] == {"ticker": "eq.AAPL", "select": "id"}
     assert session.post_calls == []
+
+
+def test_get_auth_user_calls_supabase_auth_with_user_token() -> None:
+    session = FakeSession(get_responses=[FakeResponse({"id": "user-1", "email": "user@example.com"})], post_responses=[])
+    repository = make_repository(session)
+
+    user = repository.get_auth_user("user-token")
+
+    assert user["id"] == "user-1"
+    assert session.get_calls[0]["url"] == "https://example.supabase.co/auth/v1/user"
+    assert session.get_calls[0]["headers"]["Authorization"] == "Bearer user-token"
 
 
 def test_get_or_create_asset_creates_missing_asset() -> None:
@@ -384,6 +397,58 @@ def test_get_model_runs_filters_and_orders_descending() -> None:
     assert params["model_version"] == "eq.v1"
     assert params["order"] == "created_at.desc"
     assert params["limit"] == "10"
+
+
+def test_get_default_user_risk_profile_returns_latest_default() -> None:
+    session = FakeSession(
+        get_responses=[
+            FakeResponse(
+                [
+                    {
+                        "id": "profile-1",
+                        "user_id": "user-1",
+                        "name": "default",
+                        "max_position_size": 0.05,
+                    }
+                ]
+            )
+        ],
+        post_responses=[],
+    )
+    repository = make_repository(session)
+
+    profile = repository.get_default_user_risk_profile("user-1")
+
+    assert profile and profile["id"] == "profile-1"
+    params = session.get_calls[0]["params"]
+    assert params["user_id"] == "eq.user-1"
+    assert params["is_default"] == "eq.true"
+    assert params["limit"] == "1"
+
+
+def test_upsert_default_user_risk_profile_posts_upsert_payload() -> None:
+    session = FakeSession(
+        get_responses=[],
+        post_responses=[FakeResponse([{"id": "profile-1", "name": "default"}])],
+    )
+    repository = make_repository(session)
+
+    profile = repository.upsert_default_user_risk_profile(
+        "user-1",
+        {"name": "default", "max_position_size": 0.04, "allow_short": False},
+    )
+
+    assert profile["id"] == "profile-1"
+    call = session.post_calls[0]
+    assert call["params"] == {"on_conflict": "user_id,name"}
+    assert call["headers"]["Prefer"] == "resolution=merge-duplicates,return=representation"
+    assert call["json"] == {
+        "user_id": "user-1",
+        "name": "default",
+        "max_position_size": 0.04,
+        "allow_short": False,
+        "is_default": True,
+    }
 
 
 def test_update_model_run_artifact_uri_patches_model_run() -> None:

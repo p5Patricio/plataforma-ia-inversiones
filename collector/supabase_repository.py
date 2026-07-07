@@ -51,6 +51,21 @@ class SupabaseRepository:
         response.raise_for_status()
         return response.json()
 
+    def get_auth_user(self, access_token: str) -> dict[str, Any]:
+        response = self._session.get(
+            f"{self.config.url}/auth/v1/user",
+            headers={
+                "apikey": self.config.key,
+                "Authorization": f"Bearer {access_token}",
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        user = response.json()
+        if not user.get("id"):
+            raise RuntimeError("Supabase Auth did not return a user id")
+        return user
+
     def get_or_create_asset(
         self,
         ticker: str,
@@ -324,6 +339,43 @@ class SupabaseRepository:
         if model_version:
             params["model_version"] = f"eq.{model_version}"
         return self._get_rows("model_runs", params, limit=limit)
+
+    def get_default_user_risk_profile(self, user_id: str) -> dict[str, Any] | None:
+        rows = self._get_rows(
+            "user_risk_profiles",
+            {
+                "user_id": f"eq.{user_id}",
+                "is_default": "eq.true",
+                "select": "*",
+                "order": "updated_at.desc",
+            },
+            limit=1,
+        )
+        return rows[0] if rows else None
+
+    def upsert_default_user_risk_profile(
+        self,
+        user_id: str,
+        profile: dict[str, Any],
+    ) -> dict[str, Any]:
+        payload = {
+            **profile,
+            "user_id": user_id,
+            "name": profile.get("name") or "default",
+            "is_default": True,
+        }
+        response = self._session.post(
+            f"{self.config.url}/rest/v1/user_risk_profiles",
+            headers=self.headers | {"Prefer": "resolution=merge-duplicates,return=representation"},
+            params={"on_conflict": "user_id,name"},
+            json=payload,
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not data:
+            raise RuntimeError(f"Supabase did not return updated risk profile for user: {user_id}")
+        return data[0]
 
     def update_model_run_artifact_uri(self, model_run_id: str, artifact_uri: str) -> dict[str, Any]:
         response = self._session.patch(

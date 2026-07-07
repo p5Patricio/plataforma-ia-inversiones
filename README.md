@@ -223,6 +223,25 @@ SUPABASE_KEY
 
 El workflow corre con `APP_ENV=production` y `ALLOW_DEMO_FALLBACK=false`, por lo que falla rapido si Supabase o el esquema no estan disponibles. Los reportes JSON se suben como artifacts de la ejecucion, no se versionan en el repositorio.
 
+## Perfiles de Riesgo
+
+La API soporta perfiles de riesgo por usuario autenticado con Supabase Auth:
+
+```bash
+curl -H "Authorization: Bearer <access_token>" http://127.0.0.1:8000/api/risk-profile
+```
+
+Para guardar el perfil por defecto:
+
+```bash
+curl -X PUT http://127.0.0.1:8000/api/risk-profile \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"default","max_position_size":0.05,"min_confidence_to_trade":0.7,"max_expected_risk":0.03,"stop_loss":0.02,"take_profit":0.05,"allow_short":false}'
+```
+
+Sin token, `GET /api/risk-profile` devuelve la politica conservadora por defecto. Para persistencia por usuario aplica `supabase/migrations/20260707000100_user_risk_profiles.sql`.
+
 ## Seguridad Para Repos Publicos
 
 - No publiques `.env`.
@@ -233,4 +252,5 @@ El workflow corre con `APP_ENV=production` y `ALLOW_DEMO_FALLBACK=false`, por lo
 
 ## Roadmap
 
-- Agregar autenticacion y perfiles de riesgo por usuario.
+- Conectar login de Supabase Auth en el frontend.
+- Aplicar perfiles de riesgo de usuario durante inferencia personalizada.

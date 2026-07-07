@@ -2,13 +2,16 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from math import cos, sin
+from typing import Annotated
 
-from fastapi import Depends, FastAPI, HTTPException, Query
+from fastapi import Depends, FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, Field
 from requests import RequestException
 
 from app_config import AppConfig
 from brain.logic import generate_signals
+from brain.risk import RiskPolicy
 from collector.supabase_repository import SupabaseConfig, SupabaseRepository
 
 
@@ -24,6 +27,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+class RiskProfilePayload(BaseModel):
+    name: str = Field(default="default", min_length=1, max_length=80)
+    max_position_size: float = Field(default=0.10, ge=0, le=1)
+    min_confidence_to_trade: float = Field(default=0.60, ge=0, le=1)
+    max_expected_risk: float = Field(default=0.05, ge=0, le=1)
+    stop_loss: float = Field(default=0.02, ge=0, le=1)
+    take_profit: float = Field(default=0.04, ge=0, le=5)
+    allow_short: bool = True
+
 def get_repository() -> SupabaseRepository | None:
     try:
         return SupabaseRepository(SupabaseConfig.from_env())
@@ -33,6 +46,29 @@ def get_repository() -> SupabaseRepository | None:
 
 def get_app_config() -> AppConfig:
     return APP_CONFIG
+
+
+def get_access_token(authorization: Annotated[str | None, Header()] = None) -> str | None:
+    if not authorization:
+        return None
+    scheme, _, token = authorization.partition(" ")
+    if scheme.lower() != "bearer" or not token:
+        raise HTTPException(status_code=401, detail="Authorization Bearer token requerido")
+    return token
+
+
+def get_optional_user_id(
+    access_token: str | None = Depends(get_access_token),
+    repository: SupabaseRepository | None = Depends(get_repository),
+) -> str | None:
+    if access_token is None:
+        return None
+    if repository is None:
+        raise HTTPException(status_code=503, detail="Supabase no disponible para autenticar usuario")
+    try:
+        return repository.get_auth_user(access_token)["id"]
+    except (RuntimeError, RequestException):
+        raise HTTPException(status_code=401, detail="Token de usuario invalido") from None
 
 
 @app.get("/")
@@ -200,6 +236,39 @@ def get_backtest_history(
     return []
 
 
+@app.get("/api/risk-profile")
+def get_risk_profile(
+    user_id: str | None = Depends(get_optional_user_id),
+    repository: SupabaseRepository | None = Depends(get_repository),
+):
+    if user_id is None or repository is None:
+        return format_risk_profile(None, source="default")
+
+    try:
+        profile = repository.get_default_user_risk_profile(user_id)
+    except (RuntimeError, RequestException):
+        profile = None
+    return format_risk_profile(profile, source="user" if profile else "default")
+
+
+@app.put("/api/risk-profile")
+def update_risk_profile(
+    payload: RiskProfilePayload,
+    user_id: str | None = Depends(get_optional_user_id),
+    repository: SupabaseRepository | None = Depends(get_repository),
+):
+    if user_id is None:
+        raise HTTPException(status_code=401, detail="Autenticacion requerida")
+    if repository is None:
+        raise HTTPException(status_code=503, detail="Supabase no disponible para guardar perfil de riesgo")
+
+    try:
+        profile = repository.upsert_default_user_risk_profile(user_id, payload.model_dump())
+    except (RuntimeError, RequestException):
+        raise HTTPException(status_code=503, detail="No se pudo guardar el perfil de riesgo") from None
+    return format_risk_profile(profile, source="user")
+
+
 def require_demo_fallback(config: AppConfig) -> None:
     if not config.allow_demo_fallback:
         raise HTTPException(
@@ -216,6 +285,36 @@ def require_demo_ticker(ticker: str, config: AppConfig) -> None:
 
 def should_use_demo_ticker(ticker: str, config: AppConfig) -> bool:
     return config.allow_demo_fallback and is_demo_ticker(ticker)
+
+
+def format_risk_profile(profile: dict | None, source: str) -> dict:
+    policy = risk_policy_from_profile(profile)
+    return {
+        "source": source,
+        "profile": {
+            "name": (profile or {}).get("name", "default"),
+            "max_position_size": policy.max_position_size,
+            "min_confidence_to_trade": policy.min_confidence_to_trade,
+            "max_expected_risk": policy.max_expected_risk,
+            "stop_loss": policy.stop_loss,
+            "take_profit": policy.take_profit,
+            "allow_short": policy.allow_short,
+        },
+    }
+
+
+def risk_policy_from_profile(profile: dict | None) -> RiskPolicy:
+    default_policy = RiskPolicy()
+    if not profile:
+        return default_policy
+    return RiskPolicy(
+        max_position_size=float(profile.get("max_position_size", default_policy.max_position_size)),
+        min_confidence_to_trade=float(profile.get("min_confidence_to_trade", default_policy.min_confidence_to_trade)),
+        max_expected_risk=float(profile.get("max_expected_risk", default_policy.max_expected_risk)),
+        stop_loss=float(profile.get("stop_loss", default_policy.stop_loss)),
+        take_profit=float(profile.get("take_profit", default_policy.take_profit)),
+        allow_short=bool(profile.get("allow_short", default_policy.allow_short)),
+    )
 
 
 def format_prediction_analysis(prediction: dict) -> dict:

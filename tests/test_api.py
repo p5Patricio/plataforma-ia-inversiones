@@ -9,11 +9,18 @@ from api.main import app, get_app_config, get_repository
 
 
 class FakeRepository:
-    def __init__(self, prediction: dict | None = None, prices: pd.DataFrame | None = None) -> None:
+    def __init__(
+        self,
+        prediction: dict | None = None,
+        prices: pd.DataFrame | None = None,
+        risk_profile: dict | None = None,
+    ) -> None:
         self.prediction = prediction
         self.prices = prices if prices is not None else make_prices()
+        self.risk_profile = risk_profile
         self.feedback_kwargs: dict | None = None
         self.backtest_kwargs: dict | None = None
+        self.upserted_risk_profile: dict | None = None
 
     def get_assets(self) -> list[dict]:
         return [{"id": "asset-1", "ticker": "AAPL", "name": "Apple Inc.", "asset_class": "stock"}]
@@ -118,6 +125,18 @@ class FakeRepository:
                 }
             ]
         )
+
+    def get_auth_user(self, access_token: str) -> dict:
+        if access_token == "bad-token":
+            raise RequestException("invalid token")
+        return {"id": "user-1", "email": "user@example.com"}
+
+    def get_default_user_risk_profile(self, user_id: str) -> dict | None:
+        return self.risk_profile
+
+    def upsert_default_user_risk_profile(self, user_id: str, profile: dict) -> dict:
+        self.upserted_risk_profile = {"user_id": user_id, **profile}
+        return self.upserted_risk_profile
 
 
 class PredictionUnavailableRepository(FakeRepository):
@@ -348,3 +367,98 @@ def test_prices_endpoint_returns_unavailable_when_demo_is_disabled() -> None:
     clear_overrides()
     assert response.status_code == 503
     assert response.json()["detail"] == "Fuente de datos no disponible y modo demo desactivado"
+
+
+def test_risk_profile_endpoint_returns_default_without_auth() -> None:
+    app.dependency_overrides[get_repository] = lambda: None
+    client = TestClient(app)
+
+    response = client.get("/api/risk-profile")
+
+    clear_overrides()
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["source"] == "default"
+    assert payload["profile"]["max_position_size"] == 0.1
+    assert payload["profile"]["allow_short"] is True
+
+
+def test_risk_profile_endpoint_returns_authenticated_profile() -> None:
+    override_repository(
+        FakeRepository(
+            risk_profile={
+                "name": "conservador",
+                "max_position_size": 0.03,
+                "min_confidence_to_trade": 0.72,
+                "max_expected_risk": 0.02,
+                "stop_loss": 0.01,
+                "take_profit": 0.025,
+                "allow_short": False,
+            }
+        )
+    )
+    client = TestClient(app)
+
+    response = client.get("/api/risk-profile", headers={"Authorization": "Bearer good-token"})
+
+    clear_overrides()
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["source"] == "user"
+    assert payload["profile"]["name"] == "conservador"
+    assert payload["profile"]["max_position_size"] == 0.03
+    assert payload["profile"]["allow_short"] is False
+
+
+def test_risk_profile_update_requires_auth() -> None:
+    override_repository(FakeRepository())
+    client = TestClient(app)
+
+    response = client.put("/api/risk-profile", json={"max_position_size": 0.04})
+
+    clear_overrides()
+    assert response.status_code == 401
+
+
+def test_risk_profile_update_persists_authenticated_profile() -> None:
+    repository = FakeRepository()
+    override_repository(repository)
+    client = TestClient(app)
+
+    response = client.put(
+        "/api/risk-profile",
+        headers={"Authorization": "Bearer good-token"},
+        json={
+            "name": "agresivo",
+            "max_position_size": 0.15,
+            "min_confidence_to_trade": 0.68,
+            "max_expected_risk": 0.08,
+            "stop_loss": 0.03,
+            "take_profit": 0.06,
+            "allow_short": True,
+        },
+    )
+
+    clear_overrides()
+    assert response.status_code == 200
+    assert repository.upserted_risk_profile == {
+        "user_id": "user-1",
+        "name": "agresivo",
+        "max_position_size": 0.15,
+        "min_confidence_to_trade": 0.68,
+        "max_expected_risk": 0.08,
+        "stop_loss": 0.03,
+        "take_profit": 0.06,
+        "allow_short": True,
+    }
+    assert response.json()["profile"]["take_profit"] == 0.06
+
+
+def test_risk_profile_endpoint_rejects_invalid_token() -> None:
+    override_repository(FakeRepository())
+    client = TestClient(app)
+
+    response = client.get("/api/risk-profile", headers={"Authorization": "Bearer bad-token"})
+
+    clear_overrides()
+    assert response.status_code == 401
