@@ -31,6 +31,8 @@ app.add_middleware(
 
 class RiskProfilePayload(BaseModel):
     name: str = Field(default="default", min_length=1, max_length=80)
+    scope_type: str = Field(default="default", min_length=1, max_length=40)
+    scope_value: str | None = Field(default=None, max_length=80)
     max_position_size: float = Field(default=0.10, ge=0, le=1)
     min_confidence_to_trade: float = Field(default=0.60, ge=0, le=1)
     max_expected_risk: float = Field(default=0.05, ge=0, le=1)
@@ -137,7 +139,8 @@ def analyze_ticker(
         }
 
     try:
-        asset_id = repository.get_asset_id(ticker)
+        asset = repository.get_asset(ticker)
+        asset_id = asset["id"]
         try:
             prediction = repository.get_latest_prediction(
                 asset_id=asset_id,
@@ -148,7 +151,12 @@ def analyze_ticker(
             prediction = None
 
         if prediction:
-            profile = get_user_risk_profile(repository, user_id)
+            profile = get_user_risk_profile(
+                repository,
+                user_id,
+                ticker=asset.get("ticker") or ticker,
+                asset_class=asset.get("asset_class"),
+            )
             if profile:
                 prediction = apply_user_risk_profile_to_prediction(prediction, profile)
             return {
@@ -243,16 +251,22 @@ def get_backtest_history(
 
 @app.get("/api/risk-profile")
 def get_risk_profile(
+    scope_type: str = Query(default="default"),
+    scope_value: str | None = Query(default=None),
     user_id: str | None = Depends(get_optional_user_id),
     repository: SupabaseRepository | None = Depends(get_repository),
 ):
+    scope_type, scope_value = normalize_risk_profile_scope(scope_type, scope_value)
     if user_id is None or repository is None:
         return format_risk_profile(None, source="default")
 
     try:
-        profile = repository.get_default_user_risk_profile(user_id)
+        profile = repository.get_scoped_user_risk_profile(user_id, scope_type, scope_value)
     except (RuntimeError, RequestException):
-        profile = None
+        try:
+            profile = repository.get_default_user_risk_profile(user_id) if scope_type == "default" else None
+        except (RuntimeError, RequestException):
+            profile = None
     return format_risk_profile(profile, source="user" if profile else "default")
 
 
@@ -267,8 +281,18 @@ def update_risk_profile(
     if repository is None:
         raise HTTPException(status_code=503, detail="Supabase no disponible para guardar perfil de riesgo")
 
+    profile_payload = payload.model_dump()
+    scope_type, scope_value = normalize_risk_profile_scope(
+        str(profile_payload.pop("scope_type", "default")),
+        profile_payload.pop("scope_value", None),
+    )
     try:
-        profile = repository.upsert_default_user_risk_profile(user_id, payload.model_dump())
+        profile = repository.upsert_user_risk_profile(
+            user_id,
+            profile_payload,
+            scope_type=scope_type,
+            scope_value=scope_value,
+        )
     except (RuntimeError, RequestException):
         raise HTTPException(status_code=503, detail="No se pudo guardar el perfil de riesgo") from None
     return format_risk_profile(profile, source="user")
@@ -298,6 +322,8 @@ def format_risk_profile(profile: dict | None, source: str) -> dict:
         "source": source,
         "profile": {
             "name": (profile or {}).get("name", "default"),
+            "scope_type": (profile or {}).get("scope_type", "default"),
+            "scope_value": (profile or {}).get("scope_value", ""),
             "max_position_size": policy.max_position_size,
             "min_confidence_to_trade": policy.min_confidence_to_trade,
             "max_expected_risk": policy.max_expected_risk,
@@ -322,13 +348,38 @@ def risk_policy_from_profile(profile: dict | None) -> RiskPolicy:
     )
 
 
-def get_user_risk_profile(repository: SupabaseRepository | None, user_id: str | None) -> dict | None:
+def normalize_risk_profile_scope(scope_type: str, scope_value: str | None) -> tuple[str, str]:
+    normalized_type = scope_type.strip().lower()
+    if normalized_type not in {"default", "asset_class", "ticker"}:
+        raise HTTPException(status_code=422, detail="scope_type debe ser default, asset_class o ticker")
+    if normalized_type == "default":
+        return normalized_type, ""
+
+    normalized_value = (scope_value or "").strip()
+    if not normalized_value:
+        raise HTTPException(status_code=422, detail="scope_value es requerido para perfiles por scope")
+    if normalized_type == "ticker":
+        normalized_value = normalized_value.upper()
+    else:
+        normalized_value = normalized_value.lower()
+    return normalized_type, normalized_value
+
+
+def get_user_risk_profile(
+    repository: SupabaseRepository | None,
+    user_id: str | None,
+    ticker: str | None = None,
+    asset_class: str | None = None,
+) -> dict | None:
     if repository is None or user_id is None:
         return None
     try:
-        return repository.get_default_user_risk_profile(user_id)
+        return repository.get_user_risk_profile_for_asset(user_id, ticker=ticker, asset_class=asset_class)
     except (RuntimeError, RequestException):
-        return None
+        try:
+            return repository.get_default_user_risk_profile(user_id)
+        except (RuntimeError, RequestException):
+            return None
 
 
 def apply_user_risk_profile_to_prediction(prediction: dict, profile: dict) -> dict:
@@ -351,6 +402,8 @@ def apply_user_risk_profile_to_prediction(prediction: dict, profile: dict) -> di
     adjusted_prediction["metadata"] = adjusted["metadata"]
     adjusted_prediction["metadata"]["risk"]["profile_source"] = "user"
     adjusted_prediction["metadata"]["risk"]["profile_name"] = profile.get("name", "default")
+    adjusted_prediction["metadata"]["risk"]["profile_scope"] = profile.get("scope_type", "default")
+    adjusted_prediction["metadata"]["risk"]["profile_scope_value"] = profile.get("scope_value", "")
     return adjusted_prediction
 
 
@@ -391,6 +444,8 @@ def format_prediction_analysis(prediction: dict) -> dict:
             "pre_risk_action": risk.get("pre_risk_action"),
             "profile_source": risk.get("profile_source"),
             "profile_name": risk.get("profile_name"),
+            "profile_scope": risk.get("profile_scope"),
+            "profile_scope_value": risk.get("profile_scope_value"),
         },
         "feedback": {
             "actual_label": prediction.get("actual_label"),

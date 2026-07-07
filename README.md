@@ -246,7 +246,16 @@ curl -X PUT http://127.0.0.1:8000/api/risk-profile \
   -d '{"name":"default","max_position_size":0.05,"min_confidence_to_trade":0.7,"max_expected_risk":0.03,"stop_loss":0.02,"take_profit":0.05,"allow_short":false}'
 ```
 
-Sin token, `GET /api/risk-profile` devuelve la politica conservadora por defecto. Para persistencia por usuario aplica `supabase/migrations/20260707000100_user_risk_profiles.sql`.
+Tambien puedes guardar perfiles por clase de activo o ticker. La prioridad al analizar un activo es `ticker > asset_class > default`:
+
+```bash
+curl -X PUT http://127.0.0.1:8000/api/risk-profile \
+  -H "Authorization: Bearer <access_token>" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"crypto","scope_type":"asset_class","scope_value":"crypto","max_position_size":0.03,"min_confidence_to_trade":0.75,"max_expected_risk":0.04,"stop_loss":0.02,"take_profit":0.06,"allow_short":false}'
+```
+
+Sin token, `GET /api/risk-profile` devuelve la politica conservadora por defecto. Para persistencia por usuario aplica `supabase/migrations/20260707000100_user_risk_profiles.sql` y luego `supabase/migrations/20260707000200_scoped_user_risk_profiles.sql`.
 
 El frontend activa login y edicion del perfil cuando `VITE_SUPABASE_URL` y `VITE_SUPABASE_ANON_KEY` estan configuradas.
 

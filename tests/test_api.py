@@ -21,6 +21,7 @@ class FakeRepository:
         self.feedback_kwargs: dict | None = None
         self.backtest_kwargs: dict | None = None
         self.upserted_risk_profile: dict | None = None
+        self.profile_lookup_kwargs: dict | None = None
 
     def get_assets(self) -> list[dict]:
         return [{"id": "asset-1", "ticker": "AAPL", "name": "Apple Inc.", "asset_class": "stock"}]
@@ -29,6 +30,11 @@ class FakeRepository:
         if ticker.upper() == "MISSING":
             raise ValueError("missing")
         return "asset-1"
+
+    def get_asset(self, ticker: str) -> dict:
+        if ticker.upper() == "MISSING":
+            raise ValueError("missing")
+        return {"id": "asset-1", "ticker": ticker.upper(), "name": "Apple Inc.", "asset_class": "stock"}
 
     def get_prices(self, asset_id: str, limit: int | None = None, ascending: bool = True) -> pd.DataFrame:
         prices = self.prices.head(limit) if limit else self.prices
@@ -134,8 +140,39 @@ class FakeRepository:
     def get_default_user_risk_profile(self, user_id: str) -> dict | None:
         return self.risk_profile
 
+    def get_scoped_user_risk_profile(self, user_id: str, scope_type: str, scope_value: str = "") -> dict | None:
+        self.profile_lookup_kwargs = {"user_id": user_id, "scope_type": scope_type, "scope_value": scope_value}
+        if self.risk_profile and self.risk_profile.get("scope_type", "default") == scope_type:
+            if self.risk_profile.get("scope_value", "") == scope_value:
+                return self.risk_profile
+        return None
+
+    def get_user_risk_profile_for_asset(
+        self,
+        user_id: str,
+        ticker: str | None = None,
+        asset_class: str | None = None,
+    ) -> dict | None:
+        self.profile_lookup_kwargs = {"user_id": user_id, "ticker": ticker, "asset_class": asset_class}
+        return self.risk_profile
+
     def upsert_default_user_risk_profile(self, user_id: str, profile: dict) -> dict:
         self.upserted_risk_profile = {"user_id": user_id, **profile}
+        return self.upserted_risk_profile
+
+    def upsert_user_risk_profile(
+        self,
+        user_id: str,
+        profile: dict,
+        scope_type: str = "default",
+        scope_value: str = "",
+    ) -> dict:
+        self.upserted_risk_profile = {
+            "user_id": user_id,
+            "scope_type": scope_type,
+            "scope_value": scope_value,
+            **profile,
+        }
         return self.upserted_risk_profile
 
 
@@ -225,32 +262,31 @@ def test_analysis_endpoint_prefers_latest_prediction() -> None:
 
 
 def test_analysis_endpoint_applies_authenticated_risk_profile() -> None:
-    override_repository(
-        FakeRepository(
-            risk_profile={
-                "name": "conservador",
-                "max_position_size": 0.02,
-                "min_confidence_to_trade": 0.80,
-                "max_expected_risk": 0.01,
-                "stop_loss": 0.01,
-                "take_profit": 0.02,
-                "allow_short": True,
-            },
-            prediction={
-                "predicted_action": "BUY",
-                "confidence": 0.72,
-                "expected_risk": 0.02,
-                "probabilities": {"BUY": 0.72, "HOLD": 0.2, "SELL": 0.08},
-                "model_name": "baseline",
-                "model_version": "v1",
-                "model_run_id": "run-1",
-                "feature_set": "technical_v1",
-                "label_method": "triple_barrier",
-                "horizon": 5,
-                "metadata": {"risk": {"position_size": 0.05, "blocked_reasons": [], "pre_risk_action": "BUY"}},
-            },
-        )
+    repository = FakeRepository(
+        risk_profile={
+            "name": "conservador",
+            "max_position_size": 0.02,
+            "min_confidence_to_trade": 0.80,
+            "max_expected_risk": 0.01,
+            "stop_loss": 0.01,
+            "take_profit": 0.02,
+            "allow_short": True,
+        },
+        prediction={
+            "predicted_action": "BUY",
+            "confidence": 0.72,
+            "expected_risk": 0.02,
+            "probabilities": {"BUY": 0.72, "HOLD": 0.2, "SELL": 0.08},
+            "model_name": "baseline",
+            "model_version": "v1",
+            "model_run_id": "run-1",
+            "feature_set": "technical_v1",
+            "label_method": "triple_barrier",
+            "horizon": 5,
+            "metadata": {"risk": {"position_size": 0.05, "blocked_reasons": [], "pre_risk_action": "BUY"}},
+        },
     )
+    override_repository(repository)
     client = TestClient(app)
 
     response = client.get("/api/analysis/AAPL", headers={"Authorization": "Bearer good-token"})
@@ -264,6 +300,9 @@ def test_analysis_endpoint_applies_authenticated_risk_profile() -> None:
     assert payload["analysis"]["risk"]["pre_risk_action"] == "BUY"
     assert payload["analysis"]["risk"]["profile_source"] == "user"
     assert payload["analysis"]["risk"]["profile_name"] == "conservador"
+    assert payload["analysis"]["risk"]["profile_scope"] == "default"
+    assert payload["analysis"]["risk"]["profile_scope_value"] == ""
+    assert repository.profile_lookup_kwargs == {"user_id": "user-1", "ticker": "AAPL", "asset_class": "stock"}
     assert set(payload["analysis"]["risk"]["blocked_reasons"]) == {
         "confidence_below_trade_threshold",
         "expected_risk_above_limit",
@@ -498,8 +537,45 @@ def test_risk_profile_endpoint_returns_authenticated_profile() -> None:
     payload = response.json()
     assert payload["source"] == "user"
     assert payload["profile"]["name"] == "conservador"
+    assert payload["profile"]["scope_type"] == "default"
+    assert payload["profile"]["scope_value"] == ""
     assert payload["profile"]["max_position_size"] == 0.03
     assert payload["profile"]["allow_short"] is False
+
+
+def test_risk_profile_endpoint_returns_scoped_profile() -> None:
+    repository = FakeRepository(
+        risk_profile={
+            "name": "crypto",
+            "scope_type": "asset_class",
+            "scope_value": "crypto",
+            "max_position_size": 0.02,
+            "min_confidence_to_trade": 0.75,
+            "max_expected_risk": 0.025,
+            "stop_loss": 0.01,
+            "take_profit": 0.03,
+            "allow_short": False,
+        }
+    )
+    override_repository(repository)
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/risk-profile?scope_type=asset_class&scope_value=Crypto",
+        headers={"Authorization": "Bearer good-token"},
+    )
+
+    clear_overrides()
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["source"] == "user"
+    assert payload["profile"]["scope_type"] == "asset_class"
+    assert payload["profile"]["scope_value"] == "crypto"
+    assert repository.profile_lookup_kwargs == {
+        "user_id": "user-1",
+        "scope_type": "asset_class",
+        "scope_value": "crypto",
+    }
 
 
 def test_risk_profile_update_requires_auth() -> None:
@@ -535,6 +611,8 @@ def test_risk_profile_update_persists_authenticated_profile() -> None:
     assert response.status_code == 200
     assert repository.upserted_risk_profile == {
         "user_id": "user-1",
+        "scope_type": "default",
+        "scope_value": "",
         "name": "agresivo",
         "max_position_size": 0.15,
         "min_confidence_to_trade": 0.68,
@@ -544,6 +622,44 @@ def test_risk_profile_update_persists_authenticated_profile() -> None:
         "allow_short": True,
     }
     assert response.json()["profile"]["take_profit"] == 0.06
+
+
+def test_risk_profile_update_persists_ticker_scope() -> None:
+    repository = FakeRepository()
+    override_repository(repository)
+    client = TestClient(app)
+
+    response = client.put(
+        "/api/risk-profile",
+        headers={"Authorization": "Bearer good-token"},
+        json={
+            "name": "btc",
+            "scope_type": "ticker",
+            "scope_value": "btc-usd",
+            "max_position_size": 0.04,
+            "min_confidence_to_trade": 0.70,
+            "max_expected_risk": 0.03,
+            "stop_loss": 0.02,
+            "take_profit": 0.05,
+            "allow_short": False,
+        },
+    )
+
+    clear_overrides()
+    assert response.status_code == 200
+    assert repository.upserted_risk_profile == {
+        "user_id": "user-1",
+        "scope_type": "ticker",
+        "scope_value": "BTC-USD",
+        "name": "btc",
+        "max_position_size": 0.04,
+        "min_confidence_to_trade": 0.70,
+        "max_expected_risk": 0.03,
+        "stop_loss": 0.02,
+        "take_profit": 0.05,
+        "allow_short": False,
+    }
+    assert response.json()["profile"]["scope_value"] == "BTC-USD"
 
 
 def test_risk_profile_endpoint_rejects_invalid_token() -> None:

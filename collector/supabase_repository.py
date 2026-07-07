@@ -118,6 +118,21 @@ class SupabaseRepository:
             raise ValueError(f"Asset not found in Supabase: {normalized_ticker}")
         return data[0]["id"]
 
+    def get_asset(self, ticker: str) -> dict[str, Any]:
+        normalized_ticker = ticker.upper()
+        url = f"{self.config.url}/rest/v1/assets"
+        response = self._session.get(
+            url,
+            headers=self.headers,
+            params={"ticker": f"eq.{normalized_ticker}", "select": "id,ticker,name,asset_class"},
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not data:
+            raise ValueError(f"Asset not found in Supabase: {normalized_ticker}")
+        return data[0]
+
     def get_prices(self, asset_id: str, limit: int | None = None, ascending: bool = True) -> pd.DataFrame:
         params = {
             "asset_id": f"eq.{asset_id}",
@@ -353,21 +368,67 @@ class SupabaseRepository:
         )
         return rows[0] if rows else None
 
+    def get_scoped_user_risk_profile(
+        self,
+        user_id: str,
+        scope_type: str,
+        scope_value: str = "",
+    ) -> dict[str, Any] | None:
+        rows = self._get_rows(
+            "user_risk_profiles",
+            {
+                "user_id": f"eq.{user_id}",
+                "scope_type": f"eq.{scope_type}",
+                "scope_value": f"eq.{scope_value}",
+                "select": "*",
+                "order": "updated_at.desc",
+            },
+            limit=1,
+        )
+        return rows[0] if rows else None
+
+    def get_user_risk_profile_for_asset(
+        self,
+        user_id: str,
+        ticker: str | None = None,
+        asset_class: str | None = None,
+    ) -> dict[str, Any] | None:
+        if ticker:
+            profile = self.get_scoped_user_risk_profile(user_id, "ticker", ticker.upper())
+            if profile:
+                return profile
+        if asset_class:
+            profile = self.get_scoped_user_risk_profile(user_id, "asset_class", asset_class.lower())
+            if profile:
+                return profile
+        return self.get_default_user_risk_profile(user_id)
+
     def upsert_default_user_risk_profile(
         self,
         user_id: str,
         profile: dict[str, Any],
     ) -> dict[str, Any]:
+        return self.upsert_user_risk_profile(user_id, profile, scope_type="default", scope_value="")
+
+    def upsert_user_risk_profile(
+        self,
+        user_id: str,
+        profile: dict[str, Any],
+        scope_type: str = "default",
+        scope_value: str = "",
+    ) -> dict[str, Any]:
         payload = {
             **profile,
             "user_id": user_id,
             "name": profile.get("name") or "default",
-            "is_default": True,
+            "scope_type": scope_type,
+            "scope_value": scope_value,
+            "is_default": scope_type == "default",
         }
         response = self._session.post(
             f"{self.config.url}/rest/v1/user_risk_profiles",
             headers=self.headers | {"Prefer": "resolution=merge-duplicates,return=representation"},
-            params={"on_conflict": "user_id,name"},
+            params={"on_conflict": "user_id,scope_type,scope_value"},
             json=payload,
             timeout=30,
         )

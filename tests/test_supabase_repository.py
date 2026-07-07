@@ -87,6 +87,19 @@ def test_get_auth_user_calls_supabase_auth_with_user_token() -> None:
     assert session.get_calls[0]["headers"]["Authorization"] == "Bearer user-token"
 
 
+def test_get_asset_returns_asset_metadata() -> None:
+    session = FakeSession(
+        get_responses=[FakeResponse([{"id": "asset-1", "ticker": "AAPL", "asset_class": "stock"}])],
+        post_responses=[],
+    )
+    repository = make_repository(session)
+
+    asset = repository.get_asset("aapl")
+
+    assert asset == {"id": "asset-1", "ticker": "AAPL", "asset_class": "stock"}
+    assert session.get_calls[0]["params"] == {"ticker": "eq.AAPL", "select": "id,ticker,name,asset_class"}
+
+
 def test_get_or_create_asset_creates_missing_asset() -> None:
     session = FakeSession(
         get_responses=[FakeResponse([])],
@@ -426,6 +439,39 @@ def test_get_default_user_risk_profile_returns_latest_default() -> None:
     assert params["limit"] == "1"
 
 
+def test_get_user_risk_profile_for_asset_prefers_ticker_scope() -> None:
+    session = FakeSession(
+        get_responses=[FakeResponse([{"id": "ticker-profile", "scope_type": "ticker", "scope_value": "BTC-USD"}])],
+        post_responses=[],
+    )
+    repository = make_repository(session)
+
+    profile = repository.get_user_risk_profile_for_asset("user-1", ticker="btc-usd", asset_class="crypto")
+
+    assert profile and profile["id"] == "ticker-profile"
+    assert session.get_calls[0]["params"]["scope_type"] == "eq.ticker"
+    assert session.get_calls[0]["params"]["scope_value"] == "eq.BTC-USD"
+    assert len(session.get_calls) == 1
+
+
+def test_get_user_risk_profile_for_asset_falls_back_to_asset_class_then_default() -> None:
+    session = FakeSession(
+        get_responses=[
+            FakeResponse([]),
+            FakeResponse([{"id": "class-profile", "scope_type": "asset_class", "scope_value": "crypto"}]),
+        ],
+        post_responses=[],
+    )
+    repository = make_repository(session)
+
+    profile = repository.get_user_risk_profile_for_asset("user-1", ticker="btc-usd", asset_class="Crypto")
+
+    assert profile and profile["id"] == "class-profile"
+    assert session.get_calls[0]["params"]["scope_type"] == "eq.ticker"
+    assert session.get_calls[1]["params"]["scope_type"] == "eq.asset_class"
+    assert session.get_calls[1]["params"]["scope_value"] == "eq.crypto"
+
+
 def test_upsert_default_user_risk_profile_posts_upsert_payload() -> None:
     session = FakeSession(
         get_responses=[],
@@ -440,14 +486,43 @@ def test_upsert_default_user_risk_profile_posts_upsert_payload() -> None:
 
     assert profile["id"] == "profile-1"
     call = session.post_calls[0]
-    assert call["params"] == {"on_conflict": "user_id,name"}
+    assert call["params"] == {"on_conflict": "user_id,scope_type,scope_value"}
     assert call["headers"]["Prefer"] == "resolution=merge-duplicates,return=representation"
     assert call["json"] == {
         "user_id": "user-1",
         "name": "default",
+        "scope_type": "default",
+        "scope_value": "",
         "max_position_size": 0.04,
         "allow_short": False,
         "is_default": True,
+    }
+
+
+def test_upsert_user_risk_profile_posts_scoped_payload() -> None:
+    session = FakeSession(
+        get_responses=[],
+        post_responses=[FakeResponse([{"id": "profile-1", "scope_type": "ticker", "scope_value": "BTC-USD"}])],
+    )
+    repository = make_repository(session)
+
+    profile = repository.upsert_user_risk_profile(
+        "user-1",
+        {"name": "btc", "max_position_size": 0.04},
+        scope_type="ticker",
+        scope_value="BTC-USD",
+    )
+
+    assert profile["id"] == "profile-1"
+    call = session.post_calls[0]
+    assert call["params"] == {"on_conflict": "user_id,scope_type,scope_value"}
+    assert call["json"] == {
+        "user_id": "user-1",
+        "name": "btc",
+        "max_position_size": 0.04,
+        "scope_type": "ticker",
+        "scope_value": "BTC-USD",
+        "is_default": False,
     }
 
 
