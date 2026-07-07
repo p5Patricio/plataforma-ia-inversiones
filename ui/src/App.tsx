@@ -121,6 +121,42 @@ interface BacktestSummaryRow {
   model?: ModelMetadata;
 }
 
+interface PaperTradingTimelineRow {
+  timestamp?: string;
+  action?: Signal;
+  confidence?: number | null;
+  price?: number | null;
+  mark_return?: number | null;
+  exposure?: number | null;
+  exposure_delta?: number | null;
+  cost?: number | null;
+  equity?: number | null;
+  position_state?: 'LONG' | 'SHORT' | 'FLAT' | string;
+}
+
+interface PaperTradingResponse {
+  ticker: string;
+  timestamp: string;
+  metrics: {
+    initial_capital?: number;
+    final_equity?: number;
+    total_return?: number;
+    max_drawdown?: number;
+    signal_count?: number;
+    trade_count?: number;
+    active_signal_count?: number;
+    average_abs_exposure?: number;
+    open_exposure?: number;
+    open_position?: 'LONG' | 'SHORT' | 'FLAT' | string;
+    last_price?: number | null;
+    profit_factor?: number | null;
+    fee_bps?: number;
+    slippage_bps?: number;
+    allow_short?: boolean;
+  };
+  timeline: PaperTradingTimelineRow[];
+}
+
 interface RiskProfile {
   name: string;
   scope_type?: RiskProfileScopeType | string;
@@ -157,6 +193,7 @@ function App() {
   const [analysisResponse, setAnalysisResponse] = useState<AnalysisResponse | null>(null);
   const [predictionHistory, setPredictionHistory] = useState<PredictionAuditRow[]>([]);
   const [backtests, setBacktests] = useState<BacktestSummaryRow[]>([]);
+  const [paperTrading, setPaperTrading] = useState<PaperTradingResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -206,7 +243,7 @@ function App() {
     setLoading(true);
     setError(null);
     try {
-      const [pricesResponse, analysisResponse, historyResponse, backtestsResponse] = await Promise.all([
+      const [pricesResponse, analysisResponse, historyResponse, backtestsResponse, paperTradingResponse] = await Promise.all([
         axios.get<PricePoint[]>(`${API_BASE_URL}/prices/${ticker}?limit=240`, requestConfig),
         axios.get<AnalysisResponse>(`${API_BASE_URL}/analysis/${ticker}`, requestConfig),
         axios
@@ -215,11 +252,15 @@ function App() {
         axios
           .get<BacktestSummaryRow[]>(`${API_BASE_URL}/backtests/${ticker}?limit=5`, requestConfig)
           .catch(() => ({ data: [] as BacktestSummaryRow[] })),
+        axios
+          .get<PaperTradingResponse>(`${API_BASE_URL}/paper-trading/${ticker}?limit=80`, requestConfig)
+          .catch(() => ({ data: null as PaperTradingResponse | null })),
       ]);
       setPrices(pricesResponse.data);
       setAnalysisResponse(analysisResponse.data);
       setPredictionHistory(historyResponse.data);
       setBacktests(backtestsResponse.data);
+      setPaperTrading(paperTradingResponse.data);
     } catch {
       setError('No se pudo actualizar la señal.');
     } finally {
@@ -517,6 +558,7 @@ function App() {
           </div>
 
           <BacktestPanel rows={backtests} />
+          <PaperTradingPanel paper={paperTrading} />
           <PredictionHistoryPanel rows={predictionHistory} />
         </section>
       </main>
@@ -1044,6 +1086,74 @@ function BacktestPanel({ rows }: { rows: BacktestSummaryRow[] }) {
   );
 }
 
+function PaperTradingPanel({ paper }: { paper: PaperTradingResponse | null }) {
+  const metrics = paper?.metrics;
+  const recent = (paper?.timeline ?? []).slice(-5).reverse();
+
+  return (
+    <section className="rounded-lg border border-white/10 bg-[#181b1a] p-4">
+      <div className="mb-4 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          <Activity aria-hidden="true" className="h-4 w-4 text-emerald-300" />
+          <h2 className="text-sm font-medium text-zinc-100">Paper trading</h2>
+        </div>
+        <span className={`rounded-md px-2 py-1 text-xs ${paperPositionTone(metrics?.open_position)}`}>
+          {metrics?.open_position ?? 'FLAT'}
+        </span>
+      </div>
+
+      {!paper ? (
+        <div className="rounded-lg border border-dashed border-white/10 px-3 py-6 text-center text-sm text-zinc-500">
+          Sin simulacion disponible
+        </div>
+      ) : (
+        <div className="space-y-4">
+          <div className="grid grid-cols-2 gap-3 md:grid-cols-5">
+            <SmallMetric label="Equity" value={formatCurrencyOrNA(metrics?.final_equity ?? metrics?.initial_capital)} />
+            <SmallMetric label="Retorno" value={formatPercent(metrics?.total_return)} />
+            <SmallMetric label="Drawdown" value={formatPercent(metrics?.max_drawdown)} />
+            <SmallMetric label="Trades" value={formatCount(metrics?.trade_count)} />
+            <SmallMetric label="Exposicion" value={formatPercent(metrics?.average_abs_exposure)} />
+          </div>
+
+          {recent.length === 0 ? (
+            <div className="rounded-lg border border-dashed border-white/10 px-3 py-6 text-center text-sm text-zinc-500">
+              Sin senales simuladas
+            </div>
+          ) : (
+            <div className="overflow-hidden rounded-lg border border-white/10">
+              <div className="grid grid-cols-[78px_64px_1fr_78px] gap-3 border-b border-white/10 bg-black/20 px-3 py-2 text-xs text-zinc-500 md:grid-cols-[100px_80px_92px_1fr_96px]">
+                <span>Fecha</span>
+                <span>Accion</span>
+                <span className="hidden md:block">Precio</span>
+                <span>Posicion</span>
+                <span>Equity</span>
+              </div>
+              <div className="divide-y divide-white/10">
+                {recent.map((row, index) => {
+                  const action = row.action ?? 'HOLD';
+                  return (
+                    <div
+                      key={`${row.timestamp ?? index}-${action}`}
+                      className="grid grid-cols-[78px_64px_1fr_78px] gap-3 px-3 py-3 text-sm md:grid-cols-[100px_80px_92px_1fr_96px]"
+                    >
+                      <span className="text-zinc-400">{row.timestamp ? formatShortDate(row.timestamp) : 'N/D'}</span>
+                      <span className={`font-medium ${signalTone(action).text}`}>{action}</span>
+                      <span className="hidden text-zinc-300 md:block">{formatCurrencyOrNA(row.price)}</span>
+                      <span className="min-w-0 truncate text-zinc-300">{row.position_state ?? 'FLAT'}</span>
+                      <span className="text-zinc-200">{formatCurrencyOrNA(row.equity)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+    </section>
+  );
+}
+
 function PredictionHistoryPanel({ rows }: { rows: PredictionAuditRow[] }) {
   return (
     <section className="rounded-lg border border-white/10 bg-[#181b1a] p-4">
@@ -1238,12 +1348,23 @@ function metricTone(value?: number | null) {
   return 'text-zinc-300';
 }
 
+function paperPositionTone(position?: string | null) {
+  if (position === 'LONG') return 'bg-emerald-300/10 text-emerald-200';
+  if (position === 'SHORT') return 'bg-red-300/10 text-red-200';
+  return 'bg-zinc-800 text-zinc-300';
+}
+
 function formatCurrency(value: number) {
   return new Intl.NumberFormat('es-MX', {
     style: 'currency',
     currency: 'USD',
     maximumFractionDigits: 2,
   }).format(value);
+}
+
+function formatCurrencyOrNA(value?: number | null) {
+  if (value === null || value === undefined || Number.isNaN(value)) return 'N/D';
+  return formatCurrency(value);
 }
 
 function formatDateTime(value: string) {

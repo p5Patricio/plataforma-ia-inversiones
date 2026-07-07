@@ -169,7 +169,7 @@ La API puede simular una cuenta de paper trading con las predicciones ya guardad
 curl "http://127.0.0.1:8000/api/paper-trading/BTC-USD?initial_capital=10000&fee_bps=5&slippage_bps=5"
 ```
 
-La simulacion mantiene posicion con `HOLD`, abre/ajusta long con `BUY`, abre/ajusta short con `SELL` cuando esta permitido, y aplica costos solo cuando cambia la exposicion. Devuelve metricas como equity final, retorno total, drawdown, operaciones ejecutadas, exposicion promedio y posicion abierta.
+La simulacion mantiene posicion con `HOLD`, abre/ajusta long con `BUY`, abre/ajusta short con `SELL` cuando esta permitido, y aplica costos solo cuando cambia la exposicion. Devuelve metricas como equity final, retorno total, drawdown, operaciones ejecutadas, exposicion promedio y posicion abierta. El dashboard muestra estas metricas junto con las ultimas senales simuladas para revisar rapidamente como se habria comportado la estrategia.
 
 ## Jobs Operativos
 

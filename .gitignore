@@ -6,6 +6,7 @@ __pycache__/
 *.py[cod]
 .pytest_cache/
 tmp-uvicorn*.log
+logs/
 node_modules/
 dist/
 
