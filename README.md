@@ -178,6 +178,8 @@ curl "http://127.0.0.1:8000/api/paper-trading/BTC-USD?persist=true&initial_capit
 curl "http://127.0.0.1:8000/api/paper-trading-runs/BTC-USD?limit=10"
 ```
 
+En el dashboard, el panel de paper trading permite guardar la corrida actual y comparar las corridas persistidas por retorno, drawdown, trades, equity y modelo.
+
 ## Jobs Operativos
 
 Para actualizar precios y materializar datasets:

@@ -138,6 +138,7 @@ interface PaperTradingTimelineRow {
 interface PaperTradingResponse {
   ticker: string;
   timestamp: string;
+  persisted_run_id?: string | null;
   metrics: {
     initial_capital?: number;
     final_equity?: number;
@@ -156,6 +157,25 @@ interface PaperTradingResponse {
     allow_short?: boolean;
   };
   timeline: PaperTradingTimelineRow[];
+}
+
+interface PaperTradingRunRow {
+  id?: string;
+  name?: string;
+  started_at?: string | null;
+  ended_at?: string | null;
+  created_at?: string | null;
+  metrics?: PaperTradingResponse['metrics'];
+  params?: {
+    initial_capital?: number;
+    default_position_size?: number;
+    fee_bps?: number;
+    slippage_bps?: number;
+    allow_short?: boolean;
+    model_name?: string | null;
+    model_version?: string | null;
+  };
+  model?: ModelMetadata;
 }
 
 interface RiskProfile {
@@ -195,6 +215,9 @@ function App() {
   const [predictionHistory, setPredictionHistory] = useState<PredictionAuditRow[]>([]);
   const [backtests, setBacktests] = useState<BacktestSummaryRow[]>([]);
   const [paperTrading, setPaperTrading] = useState<PaperTradingResponse | null>(null);
+  const [paperTradingRuns, setPaperTradingRuns] = useState<PaperTradingRunRow[]>([]);
+  const [paperSaving, setPaperSaving] = useState(false);
+  const [paperStatus, setPaperStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [session, setSession] = useState<Session | null>(null);
@@ -244,7 +267,7 @@ function App() {
     setLoading(true);
     setError(null);
     try {
-      const [pricesResponse, analysisResponse, historyResponse, backtestsResponse, paperTradingResponse] = await Promise.all([
+      const [pricesResponse, analysisResponse, historyResponse, backtestsResponse, paperTradingResponse, paperRunsResponse] = await Promise.all([
         axios.get<PricePoint[]>(`${API_BASE_URL}/prices/${ticker}?limit=240`, requestConfig),
         axios.get<AnalysisResponse>(`${API_BASE_URL}/analysis/${ticker}`, requestConfig),
         axios
@@ -256,18 +279,48 @@ function App() {
         axios
           .get<PaperTradingResponse>(`${API_BASE_URL}/paper-trading/${ticker}?limit=250`, requestConfig)
           .catch(() => ({ data: null as PaperTradingResponse | null })),
+        axios
+          .get<PaperTradingRunRow[]>(`${API_BASE_URL}/paper-trading-runs/${ticker}?limit=8`, requestConfig)
+          .catch(() => ({ data: [] as PaperTradingRunRow[] })),
       ]);
       setPrices(pricesResponse.data);
       setAnalysisResponse(analysisResponse.data);
       setPredictionHistory(historyResponse.data);
       setBacktests(backtestsResponse.data);
       setPaperTrading(paperTradingResponse.data);
+      setPaperTradingRuns(paperRunsResponse.data);
+      setPaperStatus(null);
     } catch {
       setError('No se pudo actualizar la señal.');
     } finally {
       setLoading(false);
     }
   }, [requestConfig]);
+
+  const persistPaperTrading = useCallback(async () => {
+    if (!selectedTicker || paperSaving) {
+      return;
+    }
+    setPaperSaving(true);
+    setPaperStatus(null);
+    try {
+      const response = await axios.get<PaperTradingResponse>(
+        `${API_BASE_URL}/paper-trading/${selectedTicker}?limit=250&persist=true`,
+        requestConfig,
+      );
+      setPaperTrading(response.data);
+      const runsResponse = await axios.get<PaperTradingRunRow[]>(
+        `${API_BASE_URL}/paper-trading-runs/${selectedTicker}?limit=8`,
+        requestConfig,
+      );
+      setPaperTradingRuns(runsResponse.data);
+      setPaperStatus(response.data.persisted_run_id ? 'Corrida guardada.' : 'Simulacion recalculada.');
+    } catch {
+      setPaperStatus('No se pudo guardar la corrida.');
+    } finally {
+      setPaperSaving(false);
+    }
+  }, [paperSaving, requestConfig, selectedTicker]);
 
   const fetchRiskProfile = useCallback(async (activeSession: Session | null, scopeType: RiskProfileScopeType, scopeValue: string) => {
     const config = activeSession?.access_token
@@ -559,7 +612,13 @@ function App() {
           </div>
 
           <BacktestPanel rows={backtests} />
-          <PaperTradingPanel paper={paperTrading} />
+          <PaperTradingPanel
+            onPersist={persistPaperTrading}
+            paper={paperTrading}
+            runs={paperTradingRuns}
+            saving={paperSaving}
+            status={paperStatus}
+          />
           <PredictionHistoryPanel rows={predictionHistory} />
         </section>
       </main>
@@ -1087,7 +1146,19 @@ function BacktestPanel({ rows }: { rows: BacktestSummaryRow[] }) {
   );
 }
 
-function PaperTradingPanel({ paper }: { paper: PaperTradingResponse | null }) {
+function PaperTradingPanel({
+  onPersist,
+  paper,
+  runs,
+  saving,
+  status,
+}: {
+  onPersist: () => void;
+  paper: PaperTradingResponse | null;
+  runs: PaperTradingRunRow[];
+  saving: boolean;
+  status: string | null;
+}) {
   const metrics = paper?.metrics;
   const recentSignals = (paper?.timeline ?? []).slice(-5).reverse();
   const recentTrades = (paper?.timeline ?? [])
@@ -1102,10 +1173,22 @@ function PaperTradingPanel({ paper }: { paper: PaperTradingResponse | null }) {
           <Activity aria-hidden="true" className="h-4 w-4 text-emerald-300" />
           <h2 className="text-sm font-medium text-zinc-100">Paper trading</h2>
         </div>
-        <span className={`rounded-md px-2 py-1 text-xs ${paperPositionTone(metrics?.open_position)}`}>
-          {metrics?.open_position ?? 'FLAT'}
-        </span>
+        <div className="flex items-center gap-2">
+          <span className={`rounded-md px-2 py-1 text-xs ${paperPositionTone(metrics?.open_position)}`}>
+            {metrics?.open_position ?? 'FLAT'}
+          </span>
+          <button
+            type="button"
+            onClick={onPersist}
+            disabled={!paper || saving}
+            className="inline-flex h-8 items-center gap-2 rounded-md border border-white/10 px-3 text-xs text-zinc-200 transition hover:bg-white/5 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <Save aria-hidden="true" className="h-3.5 w-3.5" />
+            {saving ? 'Guardando' : 'Guardar'}
+          </button>
+        </div>
       </div>
+      {status ? <p className="mb-4 text-xs text-zinc-400">{status}</p> : null}
 
       {!paper ? (
         <div className="rounded-lg border border-dashed border-white/10 px-3 py-6 text-center text-sm text-zinc-500">
@@ -1195,9 +1278,64 @@ function PaperTradingPanel({ paper }: { paper: PaperTradingResponse | null }) {
               </div>
             </div>
           )}
+
+          <PaperTradingRunsPanel rows={runs} />
         </div>
       )}
     </section>
+  );
+}
+
+function PaperTradingRunsPanel({ rows }: { rows: PaperTradingRunRow[] }) {
+  const best = [...rows].sort((a, b) => (b.metrics?.total_return ?? -Infinity) - (a.metrics?.total_return ?? -Infinity))[0];
+
+  return (
+    <div className="rounded-lg border border-white/10 p-3">
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div>
+          <h3 className="text-sm font-medium text-zinc-100">Corridas guardadas</h3>
+          <p className="text-xs text-zinc-500">
+            {rows.length > 0 && best ? `Mejor retorno: ${formatPercent(best.metrics?.total_return)}` : 'Sin historial persistido'}
+          </p>
+        </div>
+        <span className="text-xs text-zinc-500">{rows.length}</span>
+      </div>
+
+      {rows.length === 0 ? (
+        <div className="rounded-lg border border-dashed border-white/10 px-3 py-6 text-center text-sm text-zinc-500">
+          Guarda una corrida para comparar resultados.
+        </div>
+      ) : (
+        <div className="overflow-hidden rounded-lg border border-white/10">
+          <div className="grid grid-cols-[1fr_76px_76px_64px] gap-3 border-b border-white/10 bg-black/20 px-3 py-2 text-xs text-zinc-500 md:grid-cols-[1fr_92px_92px_76px_96px_88px]">
+            <span>Modelo</span>
+            <span>Retorno</span>
+            <span>Drawdown</span>
+            <span>Trades</span>
+            <span className="hidden md:block">Equity</span>
+            <span className="hidden md:block">Fecha</span>
+          </div>
+          <div className="divide-y divide-white/10">
+            {rows.map((row) => (
+              <div
+                key={row.id ?? row.name}
+                className="grid grid-cols-[1fr_76px_76px_64px] gap-3 px-3 py-3 text-sm md:grid-cols-[1fr_92px_92px_76px_96px_88px]"
+              >
+                <span className="min-w-0 truncate text-zinc-200">
+                  {row.model?.name ?? row.params?.model_name ?? 'Modelo'}:
+                  {row.model?.version ?? row.params?.model_version ?? row.name ?? 'N/D'}
+                </span>
+                <span className={metricTone(row.metrics?.total_return)}>{formatPercent(row.metrics?.total_return)}</span>
+                <span className="text-zinc-300">{formatPercent(row.metrics?.max_drawdown)}</span>
+                <span className="text-zinc-300">{formatCount(row.metrics?.trade_count)}</span>
+                <span className="hidden text-zinc-300 md:block">{formatCurrencyOrNA(row.metrics?.final_equity)}</span>
+                <span className="hidden text-zinc-400 md:block">{row.created_at ? formatShortDate(row.created_at) : 'N/D'}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 
