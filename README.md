@@ -252,6 +252,8 @@ El frontend activa login y edicion del perfil cuando `VITE_SUPABASE_URL` y `VITE
 
 Cuando el dashboard llama `GET /api/analysis/{ticker}` con un token de usuario, la API conserva la prediccion versionada del modelo pero recalcula la accion final, el tamano de posicion, stop, objetivo y bloqueos con el perfil de riesgo autenticado. Esto permite que dos usuarios vean la misma prediccion base con decisiones operativas distintas segun sus limites.
 
+La interfaz muestra esa transparencia como `Modelo base -> decision final`, junto con el perfil aplicado y las razones de bloqueo cuando el motor de riesgo cambia o condiciona la senal.
+
 ## Seguridad Para Repos Publicos
 
 - No publiques `.env`.

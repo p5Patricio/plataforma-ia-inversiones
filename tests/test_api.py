@@ -261,6 +261,7 @@ def test_analysis_endpoint_applies_authenticated_risk_profile() -> None:
     assert payload["source"] == "prediction"
     assert payload["analysis"]["signal"] == "HOLD"
     assert payload["analysis"]["risk"]["position_size"] == 0
+    assert payload["analysis"]["risk"]["pre_risk_action"] == "BUY"
     assert payload["analysis"]["risk"]["profile_source"] == "user"
     assert payload["analysis"]["risk"]["profile_name"] == "conservador"
     assert set(payload["analysis"]["risk"]["blocked_reasons"]) == {
@@ -310,6 +311,7 @@ def test_analysis_endpoint_reuses_pre_risk_action_for_user_policy() -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["analysis"]["signal"] == "HOLD"
+    assert payload["analysis"]["risk"]["pre_risk_action"] == "SELL"
     assert payload["analysis"]["risk"]["blocked_reasons"] == ["short_disabled"]
     assert payload["analysis"]["risk"]["profile_name"] == "long-only"
 

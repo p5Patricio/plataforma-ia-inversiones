@@ -388,6 +388,7 @@ def format_prediction_analysis(prediction: dict) -> dict:
             "stop_loss": risk.get("stop_loss"),
             "take_profit": risk.get("take_profit"),
             "blocked_reasons": blocked,
+            "pre_risk_action": risk.get("pre_risk_action"),
             "profile_source": risk.get("profile_source"),
             "profile_name": risk.get("profile_name"),
         },

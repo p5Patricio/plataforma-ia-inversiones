@@ -41,6 +41,9 @@ interface RiskMetadata {
   stop_loss?: number | null;
   take_profit?: number | null;
   blocked_reasons?: string[];
+  pre_risk_action?: Signal | null;
+  profile_source?: string | null;
+  profile_name?: string | null;
 }
 
 interface ModelMetadata {
@@ -695,6 +698,9 @@ function DecisionHeader({ asset, analysis }: { asset?: Asset; analysis: Analysis
   const signal = analysis?.signal ?? 'HOLD';
   const tone = signalTone(signal);
   const reasons = analysis?.reasons ?? (analysis?.reason ? [analysis.reason] : []);
+  const baseSignal = analysis?.risk?.pre_risk_action;
+  const isUserProfile = analysis?.risk?.profile_source === 'user';
+  const wasAdjusted = Boolean(baseSignal && baseSignal !== signal);
 
   return (
     <section className={`rounded-lg border p-5 ${tone.surface}`}>
@@ -715,9 +721,20 @@ function DecisionHeader({ asset, analysis }: { asset?: Asset; analysis: Analysis
               <p className="text-sm text-zinc-400">Decisión</p>
               <p className={`text-4xl font-semibold tracking-normal ${tone.text}`}>{signal}</p>
             </div>
+            {baseSignal && <MetricInline label="Modelo base" value={baseSignal} />}
             <MetricInline label="Confianza" value={formatPercent(analysis?.confidence)} />
             <MetricInline label="Horizonte" value={analysis?.model?.horizon ? `${analysis.model.horizon}d` : 'N/D'} />
           </div>
+
+          {(wasAdjusted || isUserProfile) && (
+            <RiskAdjustmentNotice
+              baseSignal={baseSignal ?? signal}
+              finalSignal={signal}
+              profileName={analysis?.risk?.profile_name}
+              reasons={analysis?.risk?.blocked_reasons ?? []}
+              userProfile={isUserProfile}
+            />
+          )}
 
           {reasons.length > 0 && (
             <div className="mt-4 flex flex-wrap gap-2">
@@ -739,9 +756,54 @@ function DecisionHeader({ asset, analysis }: { asset?: Asset; analysis: Analysis
   );
 }
 
+function RiskAdjustmentNotice({
+  baseSignal,
+  finalSignal,
+  profileName,
+  reasons,
+  userProfile,
+}: {
+  baseSignal: Signal;
+  finalSignal: Signal;
+  profileName?: string | null;
+  reasons: string[];
+  userProfile: boolean;
+}) {
+  const adjusted = baseSignal !== finalSignal;
+  const title = adjusted ? `Modelo ${baseSignal} -> decision ${finalSignal}` : `Decision con perfil ${profileName ?? 'default'}`;
+  const detail = adjusted
+    ? 'La accion final fue ajustada por las reglas de riesgo antes de mostrarse como recomendacion operativa.'
+    : 'La recomendacion usa los limites del perfil autenticado para tamano, stop, objetivo y bloqueos.';
+
+  return (
+    <div className="mt-4 rounded-lg border border-sky-300/20 bg-sky-300/10 p-3">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p className="text-sm font-medium text-sky-100">{title}</p>
+          <p className="mt-1 text-sm text-sky-100/70">{detail}</p>
+        </div>
+        <span className="shrink-0 rounded-md bg-black/20 px-2 py-1 text-xs text-sky-100">
+          {userProfile ? `Perfil ${profileName ?? 'usuario'}` : 'Politica global'}
+        </span>
+      </div>
+
+      {reasons.length > 0 && (
+        <div className="mt-3 flex flex-wrap gap-2">
+          {reasons.map((reason) => (
+            <span key={reason} className="rounded-md border border-sky-200/15 bg-black/20 px-2 py-1 text-xs text-sky-100/80">
+              {humanizeReason(reason)}
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function RiskPanel({ analysis }: { analysis: Analysis | null }) {
   const risk = analysis?.risk;
   const blocked = risk?.blocked_reasons ?? [];
+  const profileLabel = risk?.profile_source === 'user' ? risk.profile_name || 'usuario' : 'global';
 
   return (
     <section className="rounded-lg border border-white/10 bg-[#181b1a] p-4">
@@ -761,6 +823,11 @@ function RiskPanel({ analysis }: { analysis: Analysis | null }) {
         <SmallMetric label="Tamaño" value={formatPercent(risk?.position_size)} />
         <SmallMetric label="Stop" value={formatPercent(risk?.stop_loss)} />
         <SmallMetric label="Objetivo" value={formatPercent(risk?.take_profit)} />
+      </div>
+
+      <div className="mt-3 grid grid-cols-2 gap-3">
+        <SmallMetric label="Perfil" value={profileLabel} />
+        <SmallMetric label="Base" value={risk?.pre_risk_action ?? analysis?.signal ?? 'N/D'} />
       </div>
 
       {blocked.length > 0 && (
