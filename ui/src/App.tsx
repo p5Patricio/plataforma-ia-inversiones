@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useMemo, useState, type FormEvent } from 'react';
 import axios from 'axios';
 import {
   Activity,
@@ -22,11 +22,16 @@ import {
   UserCircle,
   type LucideIcon,
 } from 'lucide-react';
-import { EquityCurveChart } from './components/EquityCurveChart';
-import { FinancialChart, type PricePoint } from './components/FinancialChart';
+import type { PricePoint } from './components/FinancialChart';
 import { isSupabaseAuthConfigured, supabase, type Session } from './lib/supabase';
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL ?? 'http://localhost:8000/api').replace(/\/$/, '');
+const FinancialChart = lazy(() =>
+  import('./components/FinancialChart').then((module) => ({ default: module.FinancialChart })),
+);
+const EquityCurveChart = lazy(() =>
+  import('./components/EquityCurveChart').then((module) => ({ default: module.EquityCurveChart })),
+);
 
 type Signal = 'BUY' | 'SELL' | 'HOLD' | string;
 type RiskProfileScopeType = 'default' | 'asset_class' | 'ticker';
@@ -656,7 +661,9 @@ function App() {
                 <PriceSnapshot prices={prices} />
               </div>
               {prices.length > 0 ? (
-                <FinancialChart data={prices} />
+                <Suspense fallback={<ChartLoadingState height={420} />}>
+                  <FinancialChart data={prices} />
+                </Suspense>
               ) : (
                 <div className="flex h-[420px] items-center justify-center rounded-lg border border-dashed border-white/10 text-sm text-zinc-500">
                   Sin histórico disponible
@@ -1321,7 +1328,9 @@ function PaperTradingPanel({
               </div>
               <span className="text-xs text-zinc-500">Costo {formatNumber((metrics?.fee_bps ?? 0) + (metrics?.slippage_bps ?? 0))} bps</span>
             </div>
-            <EquityCurveChart data={paper.timeline} />
+            <Suspense fallback={<ChartLoadingState height={260} />}>
+              <EquityCurveChart data={paper.timeline} />
+            </Suspense>
           </div>
 
           {recentTrades.length > 0 ? (
@@ -1631,6 +1640,17 @@ function InfoRow({ label, value }: { label: string; value: string }) {
     <div className="flex items-center justify-between gap-4 border-b border-white/5 pb-2 last:border-b-0 last:pb-0">
       <span className="text-zinc-500">{label}</span>
       <span className="truncate text-right text-zinc-200">{value}</span>
+    </div>
+  );
+}
+
+function ChartLoadingState({ height }: { height: number }) {
+  return (
+    <div
+      className="flex items-center justify-center rounded-lg border border-dashed border-white/10 text-sm text-zinc-500"
+      style={{ height }}
+    >
+      Cargando grafico
     </div>
   );
 }
