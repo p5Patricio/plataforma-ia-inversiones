@@ -675,3 +675,71 @@ def test_insert_backtest_trades_batches_payload() -> None:
     assert payload["asset_id"] == "asset-1"
     assert payload["net_return"] == 0.028
     assert payload["metadata"]["actual_label"] == "BUY"
+
+
+def test_create_paper_trading_run_posts_payload() -> None:
+    session = FakeSession(get_responses=[], post_responses=[FakeResponse([{"id": "paper-run-1"}])])
+    repository = make_repository(session)
+
+    run_id = repository.create_paper_trading_run(
+        name="extra_trees:v1:AAPL:paper",
+        model_run_id="run-1",
+        asset_id="asset-1",
+        metrics={"total_return": 0.12},
+        params={"fee_bps": 5},
+        started_at="2024-01-01T00:00:00+00:00",
+        ended_at="2024-01-10T00:00:00+00:00",
+    )
+
+    assert run_id == "paper-run-1"
+    assert session.post_calls[0]["url"].endswith("/paper_trading_runs")
+    payload = session.post_calls[0]["json"]
+    assert payload["name"] == "extra_trees:v1:AAPL:paper"
+    assert payload["model_run_id"] == "run-1"
+    assert payload["metrics"]["total_return"] == 0.12
+    assert session.post_calls[0]["headers"]["Prefer"] == "return=representation"
+
+
+def test_get_paper_trading_runs_filters_asset_and_orders_descending() -> None:
+    session = FakeSession(get_responses=[FakeResponse([])], post_responses=[])
+    repository = make_repository(session)
+
+    runs = repository.get_paper_trading_runs(asset_id="asset-1", model_run_id="run-1", limit=5, ascending=False)
+
+    assert runs.empty
+    params = session.get_calls[0]["params"]
+    assert params["asset_id"] == "eq.asset-1"
+    assert params["model_run_id"] == "eq.run-1"
+    assert params["order"] == "created_at.desc"
+    assert params["limit"] == "5"
+    assert "model_runs(" in params["select"]
+
+
+def test_insert_paper_trading_events_batches_payload() -> None:
+    session = FakeSession(get_responses=[], post_responses=[FakeResponse()])
+    repository = make_repository(session)
+    timeline = pd.DataFrame(
+        {
+            "timestamp": pd.date_range("2024-01-01", periods=1, freq="D", tz="UTC"),
+            "action": ["BUY"],
+            "confidence": [0.8],
+            "price": [100],
+            "mark_return": [0.0],
+            "exposure": [0.5],
+            "exposure_delta": [0.5],
+            "cost": [0.001],
+            "equity": [999],
+            "position_state": ["LONG"],
+            "metadata": [{"risk": {"position_size": 0.5}}],
+        }
+    )
+
+    inserted = repository.insert_paper_trading_events("paper-run-1", "asset-1", timeline)
+
+    assert inserted == 1
+    assert session.post_calls[0]["url"].endswith("/paper_trading_events")
+    payload = session.post_calls[0]["json"][0]
+    assert payload["paper_trading_run_id"] == "paper-run-1"
+    assert payload["asset_id"] == "asset-1"
+    assert payload["exposure"] == 0.5
+    assert payload["metadata"]["risk"]["position_size"] == 0.5

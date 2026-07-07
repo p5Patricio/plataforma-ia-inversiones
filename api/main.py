@@ -261,6 +261,7 @@ def get_paper_trading(
     fee_bps: float = Query(default=5.0, ge=0),
     slippage_bps: float = Query(default=5.0, ge=0),
     allow_short: bool = Query(default=True),
+    persist: bool = Query(default=False),
     repository: SupabaseRepository | None = Depends(get_repository),
     config: AppConfig = Depends(get_app_config),
 ):
@@ -301,7 +302,29 @@ def get_paper_trading(
                 allow_short=allow_short,
             ),
         )
-        return format_paper_trading_response(ticker, result)
+        persisted_run_id = None
+        if persist:
+            try:
+                persisted_run_id = persist_paper_trading_run(
+                    repository=repository,
+                    ticker=ticker,
+                    asset_id=asset_id,
+                    predictions=predictions,
+                    result=result,
+                    params={
+                        "limit": limit,
+                        "model_name": model_name,
+                        "model_version": model_version,
+                        "initial_capital": initial_capital,
+                        "default_position_size": default_position_size,
+                        "fee_bps": fee_bps,
+                        "slippage_bps": slippage_bps,
+                        "allow_short": allow_short,
+                    },
+                )
+            except (RuntimeError, RequestException):
+                raise HTTPException(status_code=503, detail="No se pudo guardar la simulacion de paper trading") from None
+        return format_paper_trading_response(ticker, result, persisted_run_id=persisted_run_id)
     except ValueError:
         if not should_use_demo_ticker(ticker, config):
             raise HTTPException(status_code=404, detail="Activo no encontrado") from None
@@ -320,6 +343,36 @@ def get_paper_trading(
         ),
     )
     return format_paper_trading_response(ticker, result)
+
+
+@app.get("/api/paper-trading-runs/{ticker}")
+def get_paper_trading_runs(
+    ticker: str,
+    limit: int = Query(default=10, ge=1, le=100),
+    model_run_id: str | None = Query(default=None),
+    repository: SupabaseRepository | None = Depends(get_repository),
+    config: AppConfig = Depends(get_app_config),
+):
+    if repository is None:
+        require_demo_ticker(ticker, config)
+        return []
+
+    try:
+        asset_id = repository.get_asset_id(ticker)
+        runs = repository.get_paper_trading_runs(
+            asset_id=asset_id,
+            model_run_id=model_run_id,
+            limit=limit,
+            ascending=False,
+        )
+        return [format_paper_trading_run_row(row) for row in runs.to_dict(orient="records")]
+    except ValueError:
+        if not should_use_demo_ticker(ticker, config):
+            raise HTTPException(status_code=404, detail="Activo no encontrado") from None
+    except (RuntimeError, RequestException):
+        require_demo_ticker(ticker, config)
+
+    return []
 
 
 @app.get("/api/risk-profile")
@@ -568,10 +621,38 @@ def format_backtest_history_row(backtest: dict) -> dict:
     }
 
 
-def format_paper_trading_response(ticker: str, result) -> dict:
-    return {
+def persist_paper_trading_run(
+    repository: SupabaseRepository,
+    ticker: str,
+    asset_id: str,
+    predictions: pd.DataFrame,
+    result,
+    params: dict,
+) -> str:
+    model_run_id = _single_non_null_value(predictions, "model_run_id")
+    started_at = result.timeline["timestamp"].min() if not result.timeline.empty else None
+    ended_at = result.timeline["timestamp"].max() if not result.timeline.empty else None
+    model_name = params.get("model_name") or _single_non_null_value(predictions, "model_name") or "model"
+    model_version = params.get("model_version") or _single_non_null_value(predictions, "model_version") or "latest"
+    name = f"{model_name}:{model_version}:{ticker.upper()}:paper"
+    run_id = repository.create_paper_trading_run(
+        name=name,
+        model_run_id=model_run_id,
+        asset_id=asset_id,
+        metrics=result.metrics,
+        params=params,
+        started_at=started_at,
+        ended_at=ended_at,
+    )
+    repository.insert_paper_trading_events(run_id, asset_id, result.timeline)
+    return run_id
+
+
+def format_paper_trading_response(ticker: str, result, persisted_run_id: str | None = None) -> dict:
+    payload = {
         "ticker": ticker.upper(),
         "timestamp": datetime.now(tz=UTC).isoformat(),
+        "persisted_run_id": persisted_run_id,
         "metrics": result.metrics,
         "timeline": [
             {
@@ -589,6 +670,46 @@ def format_paper_trading_response(ticker: str, result) -> dict:
             }
             for row in result.timeline.to_dict(orient="records")
         ],
+    }
+    return payload
+
+
+def format_paper_trading_run_row(run: dict) -> dict:
+    metrics = run.get("metrics") or {}
+    params = run.get("params") or {}
+    model = run.get("model_runs") or {}
+    return {
+        "id": run.get("id"),
+        "name": run.get("name"),
+        "started_at": run.get("started_at"),
+        "ended_at": run.get("ended_at"),
+        "created_at": run.get("created_at"),
+        "metrics": {
+            "initial_capital": metrics.get("initial_capital"),
+            "final_equity": metrics.get("final_equity"),
+            "total_return": metrics.get("total_return"),
+            "max_drawdown": metrics.get("max_drawdown"),
+            "signal_count": metrics.get("signal_count"),
+            "trade_count": metrics.get("trade_count"),
+            "active_signal_count": metrics.get("active_signal_count"),
+            "average_abs_exposure": metrics.get("average_abs_exposure"),
+            "open_exposure": metrics.get("open_exposure"),
+            "open_position": metrics.get("open_position"),
+            "last_price": metrics.get("last_price"),
+            "profit_factor": metrics.get("profit_factor"),
+            "fee_bps": metrics.get("fee_bps"),
+            "slippage_bps": metrics.get("slippage_bps"),
+            "allow_short": metrics.get("allow_short"),
+        },
+        "params": params,
+        "model": {
+            "name": model.get("model_name"),
+            "version": model.get("model_version"),
+            "run_id": run.get("model_run_id"),
+            "feature_set": model.get("feature_set"),
+            "label_method": model.get("label_method"),
+            "horizon": model.get("horizon"),
+        },
     }
 
 
@@ -626,6 +747,13 @@ def format_prediction_history_row(prediction: dict) -> dict:
             "outcome_return": prediction.get("outcome_return"),
         },
     }
+
+
+def _single_non_null_value(frame: pd.DataFrame, column: str) -> str | None:
+    if frame.empty or column not in frame.columns:
+        return None
+    values = [value for value in frame[column].dropna().unique().tolist() if value]
+    return str(values[0]) if len(values) == 1 else None
 
 
 def _isoformat_value(value) -> str | None:

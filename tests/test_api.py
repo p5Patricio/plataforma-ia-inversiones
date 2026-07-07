@@ -22,6 +22,9 @@ class FakeRepository:
         self.risk_profile = risk_profile
         self.feedback_kwargs: dict | None = None
         self.backtest_kwargs: dict | None = None
+        self.paper_run_kwargs: dict | None = None
+        self.paper_events_kwargs: dict | None = None
+        self.paper_runs_kwargs: dict | None = None
         self.upserted_risk_profile: dict | None = None
         self.profile_lookup_kwargs: dict | None = None
 
@@ -125,6 +128,86 @@ class FakeRepository:
                         "final_equity": 12500,
                     },
                     "params": {"fee_bps": 5},
+                    "model_runs": {
+                        "model_name": "extra_trees",
+                        "model_version": "promoted",
+                        "feature_set": "technical_v2",
+                        "label_method": "triple_barrier",
+                        "horizon": 5,
+                    },
+                }
+            ]
+        )
+
+    def create_paper_trading_run(
+        self,
+        name: str,
+        model_run_id: str | None,
+        asset_id: str | None,
+        metrics: dict,
+        params: dict | None = None,
+        started_at=None,
+        ended_at=None,
+    ) -> str:
+        self.paper_run_kwargs = {
+            "name": name,
+            "model_run_id": model_run_id,
+            "asset_id": asset_id,
+            "metrics": metrics,
+            "params": params,
+            "started_at": started_at,
+            "ended_at": ended_at,
+        }
+        return "paper-run-1"
+
+    def insert_paper_trading_events(self, paper_trading_run_id: str, asset_id: str | None, timeline: pd.DataFrame) -> int:
+        self.paper_events_kwargs = {
+            "paper_trading_run_id": paper_trading_run_id,
+            "asset_id": asset_id,
+            "rows": len(timeline),
+        }
+        return len(timeline)
+
+    def get_paper_trading_runs(
+        self,
+        asset_id: str | None = None,
+        model_run_id: str | None = None,
+        limit: int | None = None,
+        ascending: bool = False,
+    ) -> pd.DataFrame:
+        self.paper_runs_kwargs = {
+            "asset_id": asset_id,
+            "model_run_id": model_run_id,
+            "limit": limit,
+            "ascending": ascending,
+        }
+        return pd.DataFrame(
+            [
+                {
+                    "id": "paper-run-1",
+                    "name": "extra_trees:promoted:AAPL:paper",
+                    "model_run_id": "run-1",
+                    "started_at": "2026-01-01T00:00:00+00:00",
+                    "ended_at": "2026-01-03T00:00:00+00:00",
+                    "created_at": "2026-07-07T00:00:00+00:00",
+                    "metrics": {
+                        "initial_capital": 1000,
+                        "final_equity": 1102.5,
+                        "total_return": 0.1025,
+                        "max_drawdown": 0,
+                        "signal_count": 3,
+                        "trade_count": 1,
+                        "active_signal_count": 1,
+                        "average_abs_exposure": 0.5,
+                        "open_exposure": 0.5,
+                        "open_position": "LONG",
+                        "last_price": 121,
+                        "profit_factor": None,
+                        "fee_bps": 0,
+                        "slippage_bps": 0,
+                        "allow_short": True,
+                    },
+                    "params": {"fee_bps": 0},
                     "model_runs": {
                         "model_name": "extra_trees",
                         "model_version": "promoted",
@@ -493,6 +576,73 @@ def test_paper_trading_endpoint_simulates_prediction_stream() -> None:
         "only_evaluated": False,
         "limit": 100,
         "ascending": True,
+    }
+
+
+def test_paper_trading_endpoint_persists_run_when_requested() -> None:
+    timestamps = pd.date_range("2026-01-01", periods=3, freq="D", tz="UTC")
+    repository = FakeRepository(
+        prices=pd.DataFrame(
+            {
+                "timestamp": timestamps,
+                "open": [100, 110, 121],
+                "high": [101, 111, 122],
+                "low": [99, 109, 120],
+                "close": [100, 110, 121],
+                "volume": [1000, 1000, 1000],
+            }
+        ),
+        prediction_feedback=pd.DataFrame(
+            {
+                "timestamp": timestamps,
+                "predicted_action": ["BUY", "HOLD", "HOLD"],
+                "confidence": [0.8, 0.5, 0.5],
+                "model_name": ["extra_trees", "extra_trees", "extra_trees"],
+                "model_version": ["promoted", "promoted", "promoted"],
+                "model_run_id": ["run-1", "run-1", "run-1"],
+                "metadata": [{"risk": {"position_size": 0.5}}, {}, {}],
+            }
+        ),
+    )
+    override_repository(repository)
+    client = TestClient(app)
+
+    response = client.get("/api/paper-trading/AAPL?initial_capital=1000&fee_bps=0&slippage_bps=0&persist=true")
+
+    clear_overrides()
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["persisted_run_id"] == "paper-run-1"
+    assert repository.paper_run_kwargs is not None
+    assert repository.paper_run_kwargs["name"] == "extra_trees:promoted:AAPL:paper"
+    assert repository.paper_run_kwargs["model_run_id"] == "run-1"
+    assert repository.paper_run_kwargs["metrics"]["trade_count"] == 1
+    assert "persist" not in repository.paper_run_kwargs["params"]
+    assert repository.paper_events_kwargs == {
+        "paper_trading_run_id": "paper-run-1",
+        "asset_id": "asset-1",
+        "rows": 3,
+    }
+
+
+def test_paper_trading_runs_endpoint_returns_persisted_summaries() -> None:
+    repository = FakeRepository()
+    override_repository(repository)
+    client = TestClient(app)
+
+    response = client.get("/api/paper-trading-runs/AAPL?limit=5&model_run_id=run-1")
+
+    clear_overrides()
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload[0]["id"] == "paper-run-1"
+    assert payload[0]["metrics"]["final_equity"] == 1102.5
+    assert payload[0]["model"]["name"] == "extra_trees"
+    assert repository.paper_runs_kwargs == {
+        "asset_id": "asset-1",
+        "model_run_id": "run-1",
+        "limit": 5,
+        "ascending": False,
     }
 
 

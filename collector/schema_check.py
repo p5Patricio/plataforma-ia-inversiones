@@ -19,6 +19,8 @@ REQUIRED_ML_RELATIONS = (
     "prediction_feedback",
     "backtests",
     "backtest_trades",
+    "paper_trading_runs",
+    "paper_trading_events",
     "risk_limits",
     "user_risk_profiles",
 )
@@ -80,7 +82,7 @@ def main() -> None:
 
         if missing:
             print()
-            print("Apply supabase/migrations/20260705000100_ml_pipeline_tables.sql in Supabase SQL Editor.")
+            print("Apply pending files in supabase/migrations/ from the Supabase SQL Editor.")
 
     sys.exit(1 if missing else 0)
 

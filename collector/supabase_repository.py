@@ -617,6 +617,100 @@ class SupabaseRepository:
             )
         return self._post_batches("backtest_trades", rows, batch_size)
 
+    def create_paper_trading_run(
+        self,
+        name: str,
+        model_run_id: str | None,
+        asset_id: str | None,
+        metrics: dict[str, Any],
+        params: dict[str, Any] | None = None,
+        started_at: str | datetime | None = None,
+        ended_at: str | datetime | None = None,
+    ) -> str:
+        payload = {
+            "name": name,
+            "model_run_id": model_run_id,
+            "asset_id": asset_id,
+            "started_at": _timestamp_or_none(started_at),
+            "ended_at": _timestamp_or_none(ended_at),
+            "params": _json_safe(params or {}),
+            "metrics": _json_safe(metrics),
+        }
+        response = self._session.post(
+            f"{self.config.url}/rest/v1/paper_trading_runs",
+            headers=self.headers | {"Prefer": "return=representation"},
+            json=payload,
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not data:
+            raise RuntimeError(f"Supabase did not return created paper trading run: {name}")
+        return data[0]["id"]
+
+    def get_paper_trading_runs(
+        self,
+        asset_id: str | None = None,
+        model_run_id: str | None = None,
+        limit: int | None = None,
+        ascending: bool = False,
+    ) -> pd.DataFrame:
+        params = {
+            "select": "*,model_runs(model_name,model_version,feature_set,label_method,horizon)",
+            "order": "created_at.asc" if ascending else "created_at.desc",
+        }
+        if asset_id:
+            params["asset_id"] = f"eq.{asset_id}"
+        if model_run_id:
+            params["model_run_id"] = f"eq.{model_run_id}"
+        return pd.DataFrame(self._get_rows("paper_trading_runs", params, limit=limit))
+
+    def insert_paper_trading_events(
+        self,
+        paper_trading_run_id: str,
+        asset_id: str | None,
+        timeline: pd.DataFrame,
+        batch_size: int = 500,
+    ) -> int:
+        if timeline.empty:
+            return 0
+        required = {
+            "timestamp",
+            "action",
+            "confidence",
+            "price",
+            "mark_return",
+            "exposure",
+            "exposure_delta",
+            "cost",
+            "equity",
+            "position_state",
+        }
+        missing = required - set(timeline.columns)
+        if missing:
+            raise ValueError(f"timeline DataFrame missing columns: {sorted(missing)}")
+
+        rows = []
+        for _, row in timeline.iterrows():
+            rows.append(
+                {
+                    "paper_trading_run_id": paper_trading_run_id,
+                    "asset_id": asset_id,
+                    "timestamp": pd.Timestamp(row["timestamp"]).isoformat(),
+                    "action": str(row["action"]),
+                    "confidence": _json_value(row["confidence"]),
+                    "price": _json_value(row["price"]),
+                    "mark_return": _json_value(row["mark_return"]),
+                    "exposure": _json_value(row["exposure"]),
+                    "exposure_delta": _json_value(row["exposure_delta"]),
+                    "cost": _json_value(row["cost"]),
+                    "equity": _json_value(row["equity"]),
+                    "position_state": str(row["position_state"]),
+                    "metadata": _json_safe(row.get("metadata", {})),
+                }
+            )
+        return self._post_batches("paper_trading_events", rows, batch_size)
+
     def _post_batches(
         self,
         table: str,
