@@ -1,0 +1,118 @@
+name: Operational Jobs
+
+on:
+  schedule:
+    - cron: "20 6 * * *"
+  workflow_dispatch:
+    inputs:
+      job:
+        description: Job to run
+        required: true
+        default: market_data
+        type: choice
+        options:
+          - market_data
+          - inference
+          - full
+      tickers:
+        description: Optional comma-separated stored tickers, for example BTC-USD,AAPL
+        required: false
+        default: ""
+      feature_sets:
+        description: Comma-separated feature sets to materialize
+        required: false
+        default: technical_v2
+      skip_collection:
+        description: Materialize existing prices without downloading market data
+        required: false
+        default: false
+        type: boolean
+      model_name:
+        description: Optional model filter for inference
+        required: false
+        default: ""
+      model_version:
+        description: Optional model version filter for inference
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  run-operational-jobs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      APP_ENV: production
+      ALLOW_DEMO_FALLBACK: "false"
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+      JOB_MODE: ${{ github.event_name == 'schedule' && 'market_data' || inputs.job }}
+      TICKERS: ${{ inputs.tickers || '' }}
+      FEATURE_SETS: ${{ inputs.feature_sets || 'technical_v2' }}
+      SKIP_COLLECTION: ${{ inputs.skip_collection || false }}
+      MODEL_NAME: ${{ inputs.model_name || '' }}
+      MODEL_VERSION: ${{ inputs.model_version || '' }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      - name: Validate runtime secrets
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_KEY" ]; then
+            echo "SUPABASE_URL and SUPABASE_KEY GitHub Secrets are required."
+            exit 1
+          fi
+
+      - name: Check Supabase schema
+        run: python -m collector.schema_check
+
+      - name: Run market data job
+        if: ${{ env.JOB_MODE == 'market_data' || env.JOB_MODE == 'full' }}
+        run: |
+          mkdir -p reports
+          CMD=(
+            python -m collector.run_market_data_job
+            --assets-file config/assets.core.json
+            --feature-sets "$FEATURE_SETS"
+            --out reports/market_data_job.json
+          )
+          if [ -n "$TICKERS" ]; then
+            CMD+=(--tickers "$TICKERS")
+          fi
+          if [ "$SKIP_COLLECTION" = "true" ]; then
+            CMD+=(--skip-collection)
+          fi
+          "${CMD[@]}"
+
+      - name: Run inference job
+        if: ${{ env.JOB_MODE == 'inference' || env.JOB_MODE == 'full' }}
+        run: |
+          mkdir -p reports
+          CMD=(python -m brain.run_inference_job --out reports/inference_job_latest.json)
+          if [ -n "$MODEL_NAME" ]; then
+            CMD+=(--model-name "$MODEL_NAME")
+          fi
+          if [ -n "$MODEL_VERSION" ]; then
+            CMD+=(--model-version "$MODEL_VERSION")
+          fi
+          "${CMD[@]}"
+
+      - name: Upload job reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: operational-job-reports
+          path: reports/*.json
+          if-no-files-found: ignore

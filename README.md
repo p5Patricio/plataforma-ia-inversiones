@@ -160,7 +160,7 @@ Si falla DNS o red en desarrollo, la API activa el modo demo local para que el d
 Para actualizar precios y materializar datasets:
 
 ```bash
-python -m collector.run_market_data_job --assets-file assets.json --feature-sets technical_v2 --out reports/market_data_job.json
+python -m collector.run_market_data_job --assets-file config/assets.core.json --feature-sets technical_v2 --out reports/market_data_job.json
 ```
 
 Para materializar un activo ya cargado en Supabase sin descargar precios:
@@ -197,6 +197,24 @@ Puede filtrarse por version:
 python -m brain.run_inference_job --model-name extra_trees --model-version promoted_smoke_20260706
 ```
 
+### Scheduler Externo
+
+El repositorio incluye `.github/workflows/operational-jobs.yml` para ejecutar jobs desde GitHub Actions:
+
+- `schedule`: corre todos los dias a las 06:20 UTC y actualiza datos/features con `config/assets.core.json`.
+- `workflow_dispatch`: permite lanzar `market_data`, `inference` o `full` manualmente.
+- `tickers`: permite limitar una corrida a instrumentos concretos, por ejemplo `BTC-USD,AAPL`.
+- `skip_collection`: materializa features y labels usando precios ya guardados.
+
+Configura estos GitHub Secrets antes de activar el workflow:
+
+```text
+SUPABASE_URL
+SUPABASE_KEY
+```
+
+El workflow corre con `APP_ENV=production` y `ALLOW_DEMO_FALLBACK=false`, por lo que falla rapido si Supabase o el esquema no estan disponibles. Los reportes JSON se suben como artifacts de la ejecucion, no se versionan en el repositorio.
+
 ## Seguridad Para Repos Publicos
 
 - No publiques `.env`.
@@ -207,5 +225,4 @@ python -m brain.run_inference_job --model-name extra_trees --model-version promo
 
 ## Roadmap
 
-- Conectar jobs operativos a un scheduler externo.
 - Agregar autenticacion y perfiles de riesgo por usuario.
