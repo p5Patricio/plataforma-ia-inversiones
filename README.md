@@ -68,11 +68,24 @@ cp .env.example .env
 2. Completa tus credenciales:
 
 ```env
+APP_ENV=development
+ALLOW_DEMO_FALLBACK=true
+API_CORS_ORIGINS=*
 SUPABASE_URL=https://tu-proyecto.supabase.co
 SUPABASE_KEY=tu-clave-server-side-local
+VITE_API_BASE_URL=http://localhost:8000/api
 ```
 
 `SUPABASE_KEY` se usa solo en backend, ingestion, entrenamiento e inferencia. No debe exponerse en el frontend ni subirse al repositorio; para ambientes con RLS activado usa una clave server-side creada para el pipeline.
+
+Variables de entorno principales:
+
+| Variable | Uso |
+| --- | --- |
+| `APP_ENV` | Entorno de ejecucion: `development`, `staging`, `production` o `test`. |
+| `ALLOW_DEMO_FALLBACK` | Permite servir datos demo si Supabase no esta disponible. Por defecto es `true` fuera de produccion y `false` en `production`. |
+| `API_CORS_ORIGINS` | Lista separada por comas de origenes permitidos por la API. |
+| `VITE_API_BASE_URL` | URL base que usa el frontend para llamar a la API. |
 
 3. Instala dependencias:
 
@@ -129,7 +142,7 @@ python -m collector.schema_check
 
 Si falta alguna relacion, aplica `supabase/migrations/20260705000100_ml_pipeline_tables.sql` desde el SQL Editor de Supabase y vuelve a ejecutar el chequeo.
 
-Si falla DNS o red, la API activa el modo demo local para que el dashboard siga siendo navegable.
+Si falla DNS o red en desarrollo, la API activa el modo demo local para que el dashboard siga siendo navegable. En produccion, deja `ALLOW_DEMO_FALLBACK=false` para que los fallos de datos se reporten como errores reales en lugar de mostrarse como lecturas sinteticas.
 
 ## Flujo de Trabajo del Modelo
 
@@ -195,5 +208,4 @@ python -m brain.run_inference_job --model-name extra_trees --model-version promo
 ## Roadmap
 
 - Conectar jobs operativos a un scheduler externo.
-- Separar modo demo, staging y produccion por configuracion.
 - Agregar autenticacion y perfiles de riesgo por usuario.

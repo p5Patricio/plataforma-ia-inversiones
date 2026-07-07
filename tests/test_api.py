@@ -4,7 +4,8 @@ import pandas as pd
 from fastapi.testclient import TestClient
 from requests import RequestException
 
-from api.main import app, get_repository
+from app_config import AppConfig
+from api.main import app, get_app_config, get_repository
 
 
 class FakeRepository:
@@ -150,6 +151,10 @@ def override_repository(repository: FakeRepository) -> None:
 
 def clear_overrides() -> None:
     app.dependency_overrides.clear()
+
+
+def override_config(config: AppConfig) -> None:
+    app.dependency_overrides[get_app_config] = lambda: config
 
 
 def test_assets_endpoint_returns_repository_assets() -> None:
@@ -319,3 +324,27 @@ def test_demo_mode_identifies_demo_source_and_varies_price_shape() -> None:
     assert analysis.status_code == 200
     assert analysis.json()["source"] == "demo_indicators"
     assert [row["close"] for row in btc_prices.json()] != [row["close"] for row in eth_prices.json()]
+
+
+def test_assets_endpoint_returns_unavailable_when_demo_is_disabled() -> None:
+    app.dependency_overrides[get_repository] = lambda: None
+    override_config(AppConfig(environment="production", allow_demo_fallback=False))
+    client = TestClient(app)
+
+    response = client.get("/api/assets")
+
+    clear_overrides()
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Fuente de datos no disponible y modo demo desactivado"
+
+
+def test_prices_endpoint_returns_unavailable_when_demo_is_disabled() -> None:
+    app.dependency_overrides[get_repository] = lambda: None
+    override_config(AppConfig(environment="production", allow_demo_fallback=False))
+    client = TestClient(app)
+
+    response = client.get("/api/prices/BTC-USD?limit=5")
+
+    clear_overrides()
+    assert response.status_code == 503
+    assert response.json()["detail"] == "Fuente de datos no disponible y modo demo desactivado"

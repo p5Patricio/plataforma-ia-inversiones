@@ -7,15 +7,18 @@ from fastapi import Depends, FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from requests import RequestException
 
+from app_config import AppConfig
 from brain.logic import generate_signals
 from collector.supabase_repository import SupabaseConfig, SupabaseRepository
 
+
+APP_CONFIG = AppConfig.from_env()
 
 app = FastAPI(title="Plataforma IA Inversiones API", version="0.2.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=list(APP_CONFIG.cors_origins),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -28,27 +31,40 @@ def get_repository() -> SupabaseRepository | None:
         return None
 
 
+def get_app_config() -> AppConfig:
+    return APP_CONFIG
+
+
 @app.get("/")
 def read_root():
     return {"message": "API de Plataforma IA Inversiones funcionando"}
 
 
 @app.get("/api/assets")
-def get_assets(repository: SupabaseRepository | None = Depends(get_repository)):
+def get_assets(
+    repository: SupabaseRepository | None = Depends(get_repository),
+    config: AppConfig = Depends(get_app_config),
+):
     if repository is None:
+        require_demo_fallback(config)
         return demo_assets()
 
     try:
         return repository.get_assets()
     except (RuntimeError, RequestException):
+        require_demo_fallback(config)
         return demo_assets()
 
 
 @app.get("/api/prices/{ticker}")
-def get_prices(ticker: str, limit: int = 100, repository: SupabaseRepository | None = Depends(get_repository)):
+def get_prices(
+    ticker: str,
+    limit: int = 100,
+    repository: SupabaseRepository | None = Depends(get_repository),
+    config: AppConfig = Depends(get_app_config),
+):
     if repository is None:
-        if not is_demo_ticker(ticker):
-            raise HTTPException(status_code=404, detail="Activo no encontrado") from None
+        require_demo_ticker(ticker, config)
         return demo_prices(ticker, limit=limit)
 
     try:
@@ -56,10 +72,10 @@ def get_prices(ticker: str, limit: int = 100, repository: SupabaseRepository | N
         prices = repository.get_prices(asset_id, limit=limit, ascending=False)
         return prices.to_dict(orient="records")
     except ValueError:
-        if not is_demo_ticker(ticker):
+        if not should_use_demo_ticker(ticker, config):
             raise HTTPException(status_code=404, detail="Activo no encontrado") from None
     except (RuntimeError, RequestException):
-        pass
+        require_demo_ticker(ticker, config)
 
     return demo_prices(ticker, limit=limit)
 
@@ -70,10 +86,10 @@ def analyze_ticker(
     model_name: str | None = Query(default=None),
     model_version: str | None = Query(default=None),
     repository: SupabaseRepository | None = Depends(get_repository),
+    config: AppConfig = Depends(get_app_config),
 ):
     if repository is None:
-        if not is_demo_ticker(ticker):
-            raise HTTPException(status_code=404, detail="Activo no encontrado") from None
+        require_demo_ticker(ticker, config)
         prices = demo_prices(ticker, limit=100)
         return {
             "ticker": ticker.upper(),
@@ -112,10 +128,10 @@ def analyze_ticker(
             "analysis": generate_signals(prices.to_dict(orient="records")),
         }
     except ValueError:
-        if not is_demo_ticker(ticker):
+        if not should_use_demo_ticker(ticker, config):
             raise HTTPException(status_code=404, detail="Activo no encontrado") from None
     except (RuntimeError, RequestException):
-        pass
+        require_demo_ticker(ticker, config)
 
     prices = demo_prices(ticker, limit=100)
     return {
@@ -134,10 +150,10 @@ def get_prediction_history(
     model_version: str | None = Query(default=None),
     only_evaluated: bool = Query(default=False),
     repository: SupabaseRepository | None = Depends(get_repository),
+    config: AppConfig = Depends(get_app_config),
 ):
     if repository is None:
-        if not is_demo_ticker(ticker):
-            raise HTTPException(status_code=404, detail="Activo no encontrado") from None
+        require_demo_ticker(ticker, config)
         return []
 
     try:
@@ -152,10 +168,10 @@ def get_prediction_history(
         )
         return [format_prediction_history_row(row) for row in feedback.to_dict(orient="records")]
     except ValueError:
-        if not is_demo_ticker(ticker):
+        if not should_use_demo_ticker(ticker, config):
             raise HTTPException(status_code=404, detail="Activo no encontrado") from None
     except (RuntimeError, RequestException):
-        pass
+        require_demo_ticker(ticker, config)
 
     return []
 
@@ -165,10 +181,10 @@ def get_backtest_history(
     ticker: str,
     limit: int = Query(default=10, ge=1, le=50),
     repository: SupabaseRepository | None = Depends(get_repository),
+    config: AppConfig = Depends(get_app_config),
 ):
     if repository is None:
-        if not is_demo_ticker(ticker):
-            raise HTTPException(status_code=404, detail="Activo no encontrado") from None
+        require_demo_ticker(ticker, config)
         return []
 
     try:
@@ -176,12 +192,30 @@ def get_backtest_history(
         backtests = repository.get_backtests(asset_id=asset_id, limit=limit, ascending=False)
         return [format_backtest_history_row(row) for row in backtests.to_dict(orient="records")]
     except ValueError:
-        if not is_demo_ticker(ticker):
+        if not should_use_demo_ticker(ticker, config):
             raise HTTPException(status_code=404, detail="Activo no encontrado") from None
     except (RuntimeError, RequestException):
-        pass
+        require_demo_ticker(ticker, config)
 
     return []
+
+
+def require_demo_fallback(config: AppConfig) -> None:
+    if not config.allow_demo_fallback:
+        raise HTTPException(
+            status_code=503,
+            detail="Fuente de datos no disponible y modo demo desactivado",
+        )
+
+
+def require_demo_ticker(ticker: str, config: AppConfig) -> None:
+    require_demo_fallback(config)
+    if not is_demo_ticker(ticker):
+        raise HTTPException(status_code=404, detail="Activo no encontrado") from None
+
+
+def should_use_demo_ticker(ticker: str, config: AppConfig) -> bool:
+    return config.allow_demo_fallback and is_demo_ticker(ticker)
 
 
 def format_prediction_analysis(prediction: dict) -> dict:
