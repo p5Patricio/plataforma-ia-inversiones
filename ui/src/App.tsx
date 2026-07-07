@@ -22,6 +22,7 @@ import {
   UserCircle,
   type LucideIcon,
 } from 'lucide-react';
+import { EquityCurveChart } from './components/EquityCurveChart';
 import { FinancialChart, type PricePoint } from './components/FinancialChart';
 import { isSupabaseAuthConfigured, supabase, type Session } from './lib/supabase';
 
@@ -253,7 +254,7 @@ function App() {
           .get<BacktestSummaryRow[]>(`${API_BASE_URL}/backtests/${ticker}?limit=5`, requestConfig)
           .catch(() => ({ data: [] as BacktestSummaryRow[] })),
         axios
-          .get<PaperTradingResponse>(`${API_BASE_URL}/paper-trading/${ticker}?limit=80`, requestConfig)
+          .get<PaperTradingResponse>(`${API_BASE_URL}/paper-trading/${ticker}?limit=250`, requestConfig)
           .catch(() => ({ data: null as PaperTradingResponse | null })),
       ]);
       setPrices(pricesResponse.data);
@@ -1088,7 +1089,11 @@ function BacktestPanel({ rows }: { rows: BacktestSummaryRow[] }) {
 
 function PaperTradingPanel({ paper }: { paper: PaperTradingResponse | null }) {
   const metrics = paper?.metrics;
-  const recent = (paper?.timeline ?? []).slice(-5).reverse();
+  const recentSignals = (paper?.timeline ?? []).slice(-5).reverse();
+  const recentTrades = (paper?.timeline ?? [])
+    .filter((row) => Math.abs(row.exposure_delta ?? 0) > 0)
+    .slice(-5)
+    .reverse();
 
   return (
     <section className="rounded-lg border border-white/10 bg-[#181b1a] p-4">
@@ -1116,7 +1121,49 @@ function PaperTradingPanel({ paper }: { paper: PaperTradingResponse | null }) {
             <SmallMetric label="Exposicion" value={formatPercent(metrics?.average_abs_exposure)} />
           </div>
 
-          {recent.length === 0 ? (
+          <div className="rounded-lg border border-white/10 p-3">
+            <div className="mb-3 flex flex-col gap-1 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="text-sm font-medium text-zinc-100">Curva de equity</h3>
+                <p className="text-xs text-zinc-500">
+                  {formatCount(metrics?.signal_count)} senales, {formatCount(metrics?.active_signal_count)} activas
+                </p>
+              </div>
+              <span className="text-xs text-zinc-500">Costo {formatNumber((metrics?.fee_bps ?? 0) + (metrics?.slippage_bps ?? 0))} bps</span>
+            </div>
+            <EquityCurveChart data={paper.timeline} />
+          </div>
+
+          {recentTrades.length > 0 ? (
+            <div className="overflow-hidden rounded-lg border border-white/10">
+              <div className="grid grid-cols-[78px_64px_1fr_78px] gap-3 border-b border-white/10 bg-black/20 px-3 py-2 text-xs text-zinc-500 md:grid-cols-[100px_80px_92px_92px_1fr]">
+                <span>Fecha</span>
+                <span>Accion</span>
+                <span className="hidden md:block">Delta</span>
+                <span>Costo</span>
+                <span>Equity</span>
+              </div>
+              <div className="divide-y divide-white/10">
+                {recentTrades.map((row, index) => {
+                  const action = row.action ?? 'HOLD';
+                  return (
+                    <div
+                      key={`trade-${row.timestamp ?? index}-${action}`}
+                      className="grid grid-cols-[78px_64px_1fr_78px] gap-3 px-3 py-3 text-sm md:grid-cols-[100px_80px_92px_92px_1fr]"
+                    >
+                      <span className="text-zinc-400">{row.timestamp ? formatShortDate(row.timestamp) : 'N/D'}</span>
+                      <span className={`font-medium ${signalTone(action).text}`}>{action}</span>
+                      <span className="hidden text-zinc-300 md:block">{formatPercent(row.exposure_delta)}</span>
+                      <span className="text-zinc-300">{formatBasisPoints(row.cost)}</span>
+                      <span className="text-zinc-200">{formatCurrencyOrNA(row.equity)}</span>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          ) : null}
+
+          {recentSignals.length === 0 ? (
             <div className="rounded-lg border border-dashed border-white/10 px-3 py-6 text-center text-sm text-zinc-500">
               Sin senales simuladas
             </div>
@@ -1130,11 +1177,11 @@ function PaperTradingPanel({ paper }: { paper: PaperTradingResponse | null }) {
                 <span>Equity</span>
               </div>
               <div className="divide-y divide-white/10">
-                {recent.map((row, index) => {
+                {recentSignals.map((row, index) => {
                   const action = row.action ?? 'HOLD';
                   return (
                     <div
-                      key={`${row.timestamp ?? index}-${action}`}
+                      key={`signal-${row.timestamp ?? index}-${action}`}
                       className="grid grid-cols-[78px_64px_1fr_78px] gap-3 px-3 py-3 text-sm md:grid-cols-[100px_80px_92px_1fr_96px]"
                     >
                       <span className="text-zinc-400">{row.timestamp ? formatShortDate(row.timestamp) : 'N/D'}</span>
@@ -1334,6 +1381,11 @@ function percentInputValue(value: number) {
 function formatNumber(value?: number | null) {
   if (value === null || value === undefined || Number.isNaN(value)) return 'N/D';
   return value.toFixed(2);
+}
+
+function formatBasisPoints(value?: number | null) {
+  if (value === null || value === undefined || Number.isNaN(value)) return 'N/D';
+  return `${(value * 10_000).toFixed(1)} bps`;
 }
 
 function formatCount(value?: number | null) {
