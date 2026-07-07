@@ -576,6 +576,107 @@ def test_feedback_summary_endpoint_returns_empty_demo_report() -> None:
     assert response.json()["summary"]["evaluated_predictions"] == 0
 
 
+def test_operational_alerts_endpoint_returns_ok_when_thresholds_pass() -> None:
+    repository = FakeRepository(
+        prediction={
+            "predicted_action": "BUY",
+            "confidence": 0.72,
+            "model_name": "extra_trees",
+            "model_version": "promoted",
+        },
+        prices=pd.DataFrame(
+            {
+                "timestamp": [pd.Timestamp.now(tz="UTC")],
+                "open": [100],
+                "high": [102],
+                "low": [99],
+                "close": [101],
+                "volume": [1000],
+            }
+        ),
+        prediction_feedback=pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2026-01-01", periods=3, freq="D", tz="UTC"),
+                "predicted_action": ["BUY", "SELL", "HOLD"],
+                "actual_label": ["BUY", "SELL", "HOLD"],
+                "is_correct": [True, True, True],
+                "confidence": [0.8, 0.7, 0.6],
+                "outcome_return": [0.03, 0.01, 0.0],
+            }
+        ),
+    )
+    override_repository(repository)
+    client = TestClient(app)
+
+    response = client.get("/api/alerts/AAPL?min_feedback_samples=3&min_accuracy=0.5")
+
+    clear_overrides()
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "ok"
+    assert payload["alerts"] == []
+    assert repository.feedback_kwargs == {
+        "model_name": None,
+        "model_version": None,
+        "asset_id": "asset-1",
+        "only_evaluated": True,
+        "limit": 250,
+        "ascending": False,
+    }
+
+
+def test_operational_alerts_endpoint_reports_stale_prices_and_low_accuracy() -> None:
+    repository = FakeRepository(
+        prediction=None,
+        prices=pd.DataFrame(
+            {
+                "timestamp": [pd.Timestamp("2026-01-01T00:00:00Z")],
+                "open": [100],
+                "high": [101],
+                "low": [99],
+                "close": [100],
+                "volume": [1000],
+            }
+        ),
+        prediction_feedback=pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2026-01-01", periods=4, freq="D", tz="UTC"),
+                "predicted_action": ["BUY", "BUY", "SELL", "SELL"],
+                "actual_label": ["SELL", "HOLD", "BUY", "BUY"],
+                "is_correct": [False, False, False, False],
+                "confidence": [0.8, 0.7, 0.6, 0.65],
+                "outcome_return": [-0.03, -0.02, -0.01, -0.04],
+            }
+        ),
+    )
+    override_repository(repository)
+    client = TestClient(app)
+
+    response = client.get(
+        "/api/alerts/AAPL?max_price_age_hours=1&min_feedback_samples=4&min_accuracy=0.5&min_mean_outcome_return=0"
+    )
+
+    clear_overrides()
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "warning"
+    codes = {alert["code"] for alert in payload["alerts"]}
+    assert {"stale_prices", "no_prediction", "low_accuracy", "negative_edge"}.issubset(codes)
+
+
+def test_operational_alerts_endpoint_reports_demo_mode() -> None:
+    app.dependency_overrides[get_repository] = lambda: None
+    client = TestClient(app)
+
+    response = client.get("/api/alerts/BTC-USD")
+
+    clear_overrides()
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["status"] == "info"
+    assert payload["alerts"][0]["code"] == "demo_data"
+
+
 def test_backtest_history_endpoint_returns_model_metrics() -> None:
     repository = FakeRepository()
     override_repository(repository)

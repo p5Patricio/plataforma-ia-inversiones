@@ -206,6 +206,16 @@ curl "http://127.0.0.1:8000/api/health"
 
 El dashboard muestra el estado en el panel `Sistema`.
 
+## Alertas Operativas
+
+Para revisar frescura de datos, existencia de prediccion versionada y calidad minima del feedback:
+
+```bash
+curl "http://127.0.0.1:8000/api/alerts/BTC-USD"
+```
+
+El endpoint acepta umbrales operativos como `max_price_age_hours`, `min_feedback_samples`, `min_accuracy` y `min_mean_outcome_return`. El dashboard muestra estas alertas junto al estado del sistema para separar lecturas saludables, datos demo, precios atrasados, falta de predicciones y degradacion del modelo.
+
 ## Jobs Operativos
 
 Para actualizar precios y materializar datasets:

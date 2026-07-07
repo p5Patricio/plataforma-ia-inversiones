@@ -138,6 +138,20 @@ interface SystemHealthResponse {
   checks: Record<string, { status?: string; reason?: string; missing?: string[] }>;
 }
 
+interface OperationalAlertsResponse {
+  ticker: string;
+  status: 'ok' | 'info' | 'warning' | 'critical' | string;
+  timestamp: string;
+  alerts: OperationalAlert[];
+}
+
+interface OperationalAlert {
+  severity: 'info' | 'warning' | 'critical' | string;
+  code: string;
+  message: string;
+  details?: Record<string, string | number | boolean | null>;
+}
+
 interface BacktestSummaryRow {
   id?: string;
   name?: string;
@@ -252,6 +266,7 @@ function App() {
   const [backtests, setBacktests] = useState<BacktestSummaryRow[]>([]);
   const [paperTrading, setPaperTrading] = useState<PaperTradingResponse | null>(null);
   const [paperTradingRuns, setPaperTradingRuns] = useState<PaperTradingRunRow[]>([]);
+  const [operationalAlerts, setOperationalAlerts] = useState<OperationalAlertsResponse | null>(null);
   const [paperSaving, setPaperSaving] = useState(false);
   const [paperStatus, setPaperStatus] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -310,6 +325,7 @@ function App() {
         analysisResponse,
         historyResponse,
         feedbackResponse,
+        alertsResponse,
         backtestsResponse,
         paperTradingResponse,
         paperRunsResponse,
@@ -322,6 +338,9 @@ function App() {
         axios
           .get<FeedbackSummaryResponse>(`${API_BASE_URL}/feedback/${ticker}?limit=250`, requestConfig)
           .catch(() => ({ data: null as FeedbackSummaryResponse | null })),
+        axios
+          .get<OperationalAlertsResponse>(`${API_BASE_URL}/alerts/${ticker}`, requestConfig)
+          .catch(() => ({ data: null as OperationalAlertsResponse | null })),
         axios
           .get<BacktestSummaryRow[]>(`${API_BASE_URL}/backtests/${ticker}?limit=5`, requestConfig)
           .catch(() => ({ data: [] as BacktestSummaryRow[] })),
@@ -336,6 +355,7 @@ function App() {
       setAnalysisResponse(analysisResponse.data);
       setPredictionHistory(historyResponse.data);
       setFeedbackSummary(feedbackResponse.data);
+      setOperationalAlerts(alertsResponse.data);
       setBacktests(backtestsResponse.data);
       setPaperTrading(paperTradingResponse.data);
       setPaperTradingRuns(paperRunsResponse.data);
@@ -588,6 +608,7 @@ function App() {
           />
 
           <SystemHealthPanel health={systemHealth} loading={healthLoading} onRefresh={fetchSystemHealth} />
+          <OperationalAlertsPanel report={operationalAlerts} />
 
           <section className="rounded-lg border border-white/10 bg-[#181b1a] p-3">
             <div className="mb-3 flex items-center justify-between">
@@ -851,6 +872,100 @@ function SystemHealthPanel({
       {missing.length > 0 ? <p className="mt-3 text-xs text-amber-200">Faltan: {missing.join(', ')}</p> : null}
     </section>
   );
+}
+
+function OperationalAlertsPanel({ report }: { report: OperationalAlertsResponse | null }) {
+  const status = report?.status ?? 'unknown';
+  const alerts = report?.alerts ?? [];
+  const tone = alertTone(status);
+
+  return (
+    <section className={`rounded-lg border p-4 ${tone.surface}`}>
+      <div className="mb-3 flex items-center justify-between gap-3">
+        <div className="flex items-center gap-2">
+          {status === 'ok' ? (
+            <CheckCircle2 aria-hidden="true" className={`h-4 w-4 ${tone.icon}`} />
+          ) : (
+            <AlertTriangle aria-hidden="true" className={`h-4 w-4 ${tone.icon}`} />
+          )}
+          <h2 className="text-sm font-medium text-zinc-100">Alertas</h2>
+        </div>
+        <span className={`rounded-md px-2 py-1 text-[11px] uppercase ${tone.badge}`}>{statusLabel(status)}</span>
+      </div>
+
+      {!report ? (
+        <p className="text-sm text-zinc-500">Sin lectura operativa.</p>
+      ) : alerts.length === 0 ? (
+        <p className="text-sm text-zinc-400">Sin alertas activas para {report.ticker}.</p>
+      ) : (
+        <div className="space-y-2">
+          {alerts.map((alert) => {
+            const itemTone = alertTone(alert.severity);
+            return (
+              <div key={`${alert.code}-${alert.message}`} className={`rounded-lg border px-3 py-2 ${itemTone.item}`}>
+                <div className="flex items-start justify-between gap-3">
+                  <p className="text-sm text-zinc-100">{alert.message}</p>
+                  <span className={`shrink-0 rounded-md px-2 py-1 text-[10px] uppercase ${itemTone.badge}`}>
+                    {statusLabel(alert.severity)}
+                  </span>
+                </div>
+                <p className="mt-1 text-xs text-zinc-500">{alert.code}</p>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function alertTone(status: string) {
+  if (status === 'critical') {
+    return {
+      surface: 'border-red-300/30 bg-red-300/10',
+      item: 'border-red-300/20 bg-red-300/10',
+      icon: 'text-red-300',
+      badge: 'bg-red-300/15 text-red-100',
+    };
+  }
+  if (status === 'warning') {
+    return {
+      surface: 'border-amber-300/30 bg-amber-300/10',
+      item: 'border-amber-300/20 bg-amber-300/10',
+      icon: 'text-amber-300',
+      badge: 'bg-amber-300/15 text-amber-100',
+    };
+  }
+  if (status === 'info') {
+    return {
+      surface: 'border-sky-300/20 bg-sky-300/10',
+      item: 'border-sky-300/15 bg-sky-300/10',
+      icon: 'text-sky-300',
+      badge: 'bg-sky-300/15 text-sky-100',
+    };
+  }
+  if (status === 'ok') {
+    return {
+      surface: 'border-emerald-300/20 bg-emerald-300/10',
+      item: 'border-emerald-300/15 bg-emerald-300/10',
+      icon: 'text-emerald-300',
+      badge: 'bg-emerald-300/15 text-emerald-100',
+    };
+  }
+  return {
+    surface: 'border-white/10 bg-[#181b1a]',
+    item: 'border-white/10 bg-black/20',
+    icon: 'text-zinc-400',
+    badge: 'bg-white/10 text-zinc-300',
+  };
+}
+
+function statusLabel(status: string) {
+  if (status === 'critical') return 'Critica';
+  if (status === 'warning') return 'Revision';
+  if (status === 'info') return 'Info';
+  if (status === 'ok') return 'OK';
+  return 'N/D';
 }
 
 function RiskProfilePanel({

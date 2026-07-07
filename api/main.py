@@ -295,6 +295,61 @@ def get_feedback_summary(
     return format_feedback_report(analyze_prediction_feedback(pd.DataFrame()))
 
 
+@app.get("/api/alerts/{ticker}")
+def get_operational_alerts(
+    ticker: str,
+    max_price_age_hours: float = Query(default=72.0, gt=0),
+    min_feedback_samples: int = Query(default=20, ge=1, le=1000),
+    min_accuracy: float = Query(default=0.45, ge=0, le=1),
+    min_mean_outcome_return: float = Query(default=0.0, ge=-1, le=1),
+    repository: SupabaseRepository | None = Depends(get_repository),
+    config: AppConfig = Depends(get_app_config),
+):
+    if repository is None:
+        require_demo_ticker(ticker, config)
+        return format_operational_alerts(
+            ticker,
+            [
+                {
+                    "severity": "info",
+                    "code": "demo_data",
+                    "message": "Modo demo activo; las alertas no representan datos reales de mercado.",
+                    "details": {},
+                }
+            ],
+        )
+
+    try:
+        asset_id = repository.get_asset_id(ticker)
+        prices = repository.get_prices(asset_id, limit=1, ascending=False)
+        prediction = repository.get_latest_prediction(asset_id=asset_id)
+        feedback = repository.get_prediction_feedback(
+            asset_id=asset_id,
+            only_evaluated=True,
+            limit=max(min_feedback_samples, 250),
+            ascending=False,
+        )
+        feedback_report = analyze_prediction_feedback(feedback)
+        alerts = build_operational_alerts(
+            ticker=ticker,
+            prices=prices,
+            latest_prediction=prediction,
+            feedback_report=feedback_report,
+            max_price_age_hours=max_price_age_hours,
+            min_feedback_samples=min_feedback_samples,
+            min_accuracy=min_accuracy,
+            min_mean_outcome_return=min_mean_outcome_return,
+        )
+        return format_operational_alerts(ticker, alerts)
+    except ValueError:
+        if not should_use_demo_ticker(ticker, config):
+            raise HTTPException(status_code=404, detail="Activo no encontrado") from None
+    except (RuntimeError, RequestException):
+        require_demo_ticker(ticker, config)
+
+    return format_operational_alerts(ticker, [])
+
+
 @app.get("/api/backtests/{ticker}")
 def get_backtest_history(
     ticker: str,
@@ -716,6 +771,139 @@ def format_feedback_report(report) -> dict:
             for row in report.by_confidence_bucket
         ],
     }
+
+
+def build_operational_alerts(
+    ticker: str,
+    prices: pd.DataFrame,
+    latest_prediction: dict | None,
+    feedback_report,
+    max_price_age_hours: float,
+    min_feedback_samples: int,
+    min_accuracy: float,
+    min_mean_outcome_return: float,
+    now: datetime | None = None,
+) -> list[dict]:
+    alerts: list[dict] = []
+    now = now or datetime.now(tz=UTC)
+
+    if prices.empty:
+        alerts.append(
+            {
+                "severity": "critical",
+                "code": "no_prices",
+                "message": f"{ticker.upper()} no tiene precios disponibles para analisis.",
+                "details": {},
+            }
+        )
+    elif "timestamp" not in prices.columns:
+        alerts.append(
+            {
+                "severity": "warning",
+                "code": "missing_price_timestamp",
+                "message": "La ultima lectura de precios no incluye timestamp.",
+                "details": {},
+            }
+        )
+    else:
+        latest_price_at = pd.to_datetime(prices["timestamp"], utc=True, errors="coerce").max()
+        if pd.isna(latest_price_at):
+            alerts.append(
+                {
+                    "severity": "warning",
+                    "code": "invalid_price_timestamp",
+                    "message": "No se pudo interpretar la fecha de la ultima lectura de precios.",
+                    "details": {},
+                }
+            )
+        else:
+            latest_price_dt = latest_price_at.to_pydatetime()
+            age_hours = max((now - latest_price_dt).total_seconds() / 3600, 0)
+            if age_hours > max_price_age_hours:
+                alerts.append(
+                    {
+                        "severity": "warning",
+                        "code": "stale_prices",
+                        "message": "La ultima lectura de precios esta atrasada.",
+                        "details": {
+                            "latest_price_at": latest_price_dt.isoformat(),
+                            "age_hours": round(age_hours, 2),
+                            "max_price_age_hours": max_price_age_hours,
+                        },
+                    }
+                )
+
+    if not latest_prediction:
+        alerts.append(
+            {
+                "severity": "warning",
+                "code": "no_prediction",
+                "message": "No hay una prediccion versionada reciente para este activo.",
+                "details": {},
+            }
+        )
+
+    summary = feedback_report.summary
+    evaluated = int(summary.get("evaluated_predictions") or 0)
+    accuracy = summary.get("accuracy")
+    mean_outcome_return = summary.get("mean_outcome_return")
+
+    if evaluated < min_feedback_samples:
+        alerts.append(
+            {
+                "severity": "info",
+                "code": "insufficient_feedback",
+                "message": "Aun hay pocas predicciones evaluadas para juzgar estabilidad.",
+                "details": {
+                    "evaluated_predictions": evaluated,
+                    "min_feedback_samples": min_feedback_samples,
+                },
+            }
+        )
+    else:
+        if accuracy is not None and float(accuracy) < min_accuracy:
+            alerts.append(
+                {
+                    "severity": "warning",
+                    "code": "low_accuracy",
+                    "message": "El acierto observado esta por debajo del umbral operativo.",
+                    "details": {"accuracy": float(accuracy), "min_accuracy": min_accuracy},
+                }
+            )
+        if mean_outcome_return is not None and float(mean_outcome_return) < min_mean_outcome_return:
+            alerts.append(
+                {
+                    "severity": "warning",
+                    "code": "negative_edge",
+                    "message": "El retorno medio observado no supera el umbral minimo.",
+                    "details": {
+                        "mean_outcome_return": float(mean_outcome_return),
+                        "min_mean_outcome_return": min_mean_outcome_return,
+                    },
+                }
+            )
+
+    return alerts
+
+
+def format_operational_alerts(ticker: str, alerts: list[dict]) -> dict:
+    return {
+        "ticker": ticker.upper(),
+        "status": alert_status(alerts),
+        "timestamp": datetime.now(tz=UTC).isoformat(),
+        "alerts": alerts,
+    }
+
+
+def alert_status(alerts: list[dict]) -> str:
+    severities = {str(alert.get("severity", "info")) for alert in alerts}
+    if "critical" in severities:
+        return "critical"
+    if "warning" in severities:
+        return "warning"
+    if "info" in severities:
+        return "info"
+    return "ok"
 
 
 def persist_paper_trading_run(
