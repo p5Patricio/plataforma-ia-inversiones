@@ -161,6 +161,16 @@ Si falla DNS o red en desarrollo, la API activa el modo demo local para que el d
 7. Evaluar feedback de predicciones previas.
 8. Servir la decision en la API con riesgo y trazabilidad.
 
+## Paper Trading
+
+La API puede simular una cuenta de paper trading con las predicciones ya guardadas y precios observados:
+
+```bash
+curl "http://127.0.0.1:8000/api/paper-trading/BTC-USD?initial_capital=10000&fee_bps=5&slippage_bps=5"
+```
+
+La simulacion mantiene posicion con `HOLD`, abre/ajusta long con `BUY`, abre/ajusta short con `SELL` cuando esta permitido, y aplica costos solo cuando cambia la exposicion. Devuelve metricas como equity final, retorno total, drawdown, operaciones ejecutadas, exposicion promedio y posicion abierta.
+
 ## Jobs Operativos
 
 Para actualizar precios y materializar datasets:

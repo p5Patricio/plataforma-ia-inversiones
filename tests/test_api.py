@@ -13,10 +13,12 @@ class FakeRepository:
         self,
         prediction: dict | None = None,
         prices: pd.DataFrame | None = None,
+        prediction_feedback: pd.DataFrame | None = None,
         risk_profile: dict | None = None,
     ) -> None:
         self.prediction = prediction
         self.prices = prices if prices is not None else make_prices()
+        self.prediction_feedback = prediction_feedback
         self.risk_profile = risk_profile
         self.feedback_kwargs: dict | None = None
         self.backtest_kwargs: dict | None = None
@@ -65,6 +67,8 @@ class FakeRepository:
             "limit": limit,
             "ascending": ascending,
         }
+        if self.prediction_feedback is not None:
+            return self.prediction_feedback
         return pd.DataFrame(
             [
                 {
@@ -445,6 +449,64 @@ def test_backtest_history_endpoint_returns_empty_demo_history() -> None:
     clear_overrides()
     assert response.status_code == 200
     assert response.json() == []
+
+
+def test_paper_trading_endpoint_simulates_prediction_stream() -> None:
+    timestamps = pd.date_range("2026-01-01", periods=3, freq="D", tz="UTC")
+    repository = FakeRepository(
+        prices=pd.DataFrame(
+            {
+                "timestamp": timestamps,
+                "open": [100, 110, 121],
+                "high": [101, 111, 122],
+                "low": [99, 109, 120],
+                "close": [100, 110, 121],
+                "volume": [1000, 1000, 1000],
+            }
+        ),
+        prediction_feedback=pd.DataFrame(
+            {
+                "timestamp": timestamps,
+                "predicted_action": ["BUY", "HOLD", "HOLD"],
+                "confidence": [0.8, 0.5, 0.5],
+                "metadata": [{"risk": {"position_size": 0.5}}, {}, {}],
+            }
+        ),
+    )
+    override_repository(repository)
+    client = TestClient(app)
+
+    response = client.get("/api/paper-trading/AAPL?initial_capital=1000&fee_bps=0&slippage_bps=0")
+
+    clear_overrides()
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["ticker"] == "AAPL"
+    assert payload["metrics"]["trade_count"] == 1
+    assert payload["metrics"]["open_position"] == "LONG"
+    assert round(payload["metrics"]["final_equity"], 2) == 1102.5
+    assert len(payload["timeline"]) == 3
+    assert repository.feedback_kwargs == {
+        "model_name": None,
+        "model_version": None,
+        "asset_id": "asset-1",
+        "only_evaluated": False,
+        "limit": 100,
+        "ascending": True,
+    }
+
+
+def test_paper_trading_endpoint_returns_flat_demo_result() -> None:
+    app.dependency_overrides[get_repository] = lambda: None
+    client = TestClient(app)
+
+    response = client.get("/api/paper-trading/BTC-USD")
+
+    clear_overrides()
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["metrics"]["open_position"] == "FLAT"
+    assert payload["timeline"] == []
 
 
 def test_prices_endpoint_returns_descending_prices() -> None:

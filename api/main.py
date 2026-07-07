@@ -12,6 +12,7 @@ from requests import RequestException
 
 from app_config import AppConfig
 from brain.logic import generate_signals
+from brain.paper_trading import PaperTradingConfig, run_paper_trading
 from brain.risk import RiskPolicy, apply_risk_policy
 from collector.supabase_repository import SupabaseConfig, SupabaseRepository
 
@@ -247,6 +248,78 @@ def get_backtest_history(
         require_demo_ticker(ticker, config)
 
     return []
+
+
+@app.get("/api/paper-trading/{ticker}")
+def get_paper_trading(
+    ticker: str,
+    limit: int = Query(default=100, ge=1, le=500),
+    model_name: str | None = Query(default=None),
+    model_version: str | None = Query(default=None),
+    initial_capital: float = Query(default=10_000.0, gt=0),
+    default_position_size: float = Query(default=0.10, ge=0, le=1),
+    fee_bps: float = Query(default=5.0, ge=0),
+    slippage_bps: float = Query(default=5.0, ge=0),
+    allow_short: bool = Query(default=True),
+    repository: SupabaseRepository | None = Depends(get_repository),
+    config: AppConfig = Depends(get_app_config),
+):
+    if repository is None:
+        require_demo_ticker(ticker, config)
+        result = run_paper_trading(
+            pd.DataFrame(),
+            pd.DataFrame(demo_prices(ticker, limit=limit)),
+            PaperTradingConfig(
+                initial_capital=initial_capital,
+                default_position_size=default_position_size,
+                fee_bps=fee_bps,
+                slippage_bps=slippage_bps,
+                allow_short=allow_short,
+            ),
+        )
+        return format_paper_trading_response(ticker, result)
+
+    try:
+        asset_id = repository.get_asset_id(ticker)
+        predictions = repository.get_prediction_feedback(
+            asset_id=asset_id,
+            model_name=model_name,
+            model_version=model_version,
+            only_evaluated=False,
+            limit=limit,
+            ascending=True,
+        )
+        prices = repository.get_prices(asset_id, limit=max(limit * 3, limit), ascending=True)
+        result = run_paper_trading(
+            predictions,
+            prices,
+            PaperTradingConfig(
+                initial_capital=initial_capital,
+                default_position_size=default_position_size,
+                fee_bps=fee_bps,
+                slippage_bps=slippage_bps,
+                allow_short=allow_short,
+            ),
+        )
+        return format_paper_trading_response(ticker, result)
+    except ValueError:
+        if not should_use_demo_ticker(ticker, config):
+            raise HTTPException(status_code=404, detail="Activo no encontrado") from None
+    except (RuntimeError, RequestException):
+        require_demo_ticker(ticker, config)
+
+    result = run_paper_trading(
+        pd.DataFrame(),
+        pd.DataFrame(demo_prices(ticker, limit=limit)),
+        PaperTradingConfig(
+            initial_capital=initial_capital,
+            default_position_size=default_position_size,
+            fee_bps=fee_bps,
+            slippage_bps=slippage_bps,
+            allow_short=allow_short,
+        ),
+    )
+    return format_paper_trading_response(ticker, result)
 
 
 @app.get("/api/risk-profile")
@@ -495,6 +568,30 @@ def format_backtest_history_row(backtest: dict) -> dict:
     }
 
 
+def format_paper_trading_response(ticker: str, result) -> dict:
+    return {
+        "ticker": ticker.upper(),
+        "timestamp": datetime.now(tz=UTC).isoformat(),
+        "metrics": result.metrics,
+        "timeline": [
+            {
+                "timestamp": _isoformat_value(row.get("timestamp")),
+                "action": row.get("action"),
+                "confidence": row.get("confidence"),
+                "price": row.get("price"),
+                "mark_return": row.get("mark_return"),
+                "exposure": row.get("exposure"),
+                "exposure_delta": row.get("exposure_delta"),
+                "cost": row.get("cost"),
+                "equity": row.get("equity"),
+                "position_state": row.get("position_state"),
+                "metadata": row.get("metadata") or {},
+            }
+            for row in result.timeline.to_dict(orient="records")
+        ],
+    }
+
+
 def format_prediction_history_row(prediction: dict) -> dict:
     metadata = prediction.get("metadata") or {}
     risk = metadata.get("risk") or {}
@@ -529,6 +626,12 @@ def format_prediction_history_row(prediction: dict) -> dict:
             "outcome_return": prediction.get("outcome_return"),
         },
     }
+
+
+def _isoformat_value(value) -> str | None:
+    if value is None or pd.isna(value):
+        return None
+    return pd.Timestamp(value).isoformat()
 
 
 def demo_assets() -> list[dict]:
