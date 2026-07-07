@@ -1,11 +1,11 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from pathlib import Path
 from typing import Any
 
 import joblib
 
+from brain.artifacts import resolve_model_artifact
 from brain.features import feature_columns_for_set
 from brain.promotion import generate_latest_prediction
 from brain.risk import RiskPolicy
@@ -69,9 +69,7 @@ def run_latest_inference_job(
             artifact_uri = model_run.get("artifact_uri")
             if not artifact_uri:
                 raise ValueError("model_run_missing_artifact_uri")
-            artifact_path = Path(artifact_uri)
-            if not artifact_path.exists():
-                raise ValueError(f"artifact_not_found:{artifact_path}")
+            artifact_path = resolve_model_artifact(str(artifact_uri))
 
             model = joblib.load(artifact_path)
             feature_columns = feature_columns_for_set(model_run["feature_set"])

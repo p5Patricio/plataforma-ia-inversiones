@@ -20,8 +20,10 @@ class FakeSession:
     def __init__(self, get_responses: list[FakeResponse], post_responses: list[FakeResponse]) -> None:
         self.get_responses = get_responses
         self.post_responses = post_responses
+        self.patch_responses: list[FakeResponse] = []
         self.get_calls: list[dict] = []
         self.post_calls: list[dict] = []
+        self.patch_calls: list[dict] = []
 
     def get(self, url: str, headers: dict, params: dict, timeout: int) -> FakeResponse:
         self.get_calls.append({"url": url, "headers": headers, "params": params, "timeout": timeout})
@@ -39,6 +41,19 @@ class FakeSession:
             {"url": url, "headers": headers, "json": json, "params": params, "timeout": timeout}
         )
         return self.post_responses.pop(0)
+
+    def patch(
+        self,
+        url: str,
+        headers: dict,
+        params: dict,
+        json: dict,
+        timeout: int,
+    ) -> FakeResponse:
+        self.patch_calls.append(
+            {"url": url, "headers": headers, "params": params, "json": json, "timeout": timeout}
+        )
+        return self.patch_responses.pop(0)
 
 
 def make_repository(session: FakeSession) -> SupabaseRepository:
@@ -369,6 +384,19 @@ def test_get_model_runs_filters_and_orders_descending() -> None:
     assert params["model_version"] == "eq.v1"
     assert params["order"] == "created_at.desc"
     assert params["limit"] == "10"
+
+
+def test_update_model_run_artifact_uri_patches_model_run() -> None:
+    session = FakeSession(get_responses=[], post_responses=[])
+    session.patch_responses = [FakeResponse([{"id": "run-1", "artifact_uri": "supabase://bucket/model.joblib"}])]
+    repository = make_repository(session)
+
+    updated = repository.update_model_run_artifact_uri("run-1", "supabase://bucket/model.joblib")
+
+    assert updated["artifact_uri"] == "supabase://bucket/model.joblib"
+    assert session.patch_calls[0]["params"] == {"id": "eq.run-1"}
+    assert session.patch_calls[0]["json"] == {"artifact_uri": "supabase://bucket/model.joblib"}
+    assert session.patch_calls[0]["headers"]["Prefer"] == "return=representation"
 
 
 def test_upsert_predictions_stores_probabilities_and_metadata() -> None:

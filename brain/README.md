@@ -159,6 +159,14 @@ Este comando:
 5. registra el `model_run` en Supabase con `candidate_id`, metricas y assets usados;
 6. genera la prediccion mas reciente para el activo objetivo.
 
+Para que un scheduler remoto como GitHub Actions pueda ejecutar inferencia, sube el artefacto promovido a Supabase Storage y actualiza `model_runs.artifact_uri`:
+
+```powershell
+python -m brain.upload_model_artifact --model-name extra_trees --model-version promoted_smoke_20260706
+```
+
+El comando crea o usa el bucket privado `model-artifacts`, sube el `.joblib` local y deja el `artifact_uri` con formato `supabase://model-artifacts/models/<archivo>.joblib`. La inferencia sigue soportando rutas locales para desarrollo.
+
 Para promover un candidato especifico:
 
 ```powershell

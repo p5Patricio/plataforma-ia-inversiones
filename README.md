@@ -191,6 +191,14 @@ El job:
 - aplica reglas de riesgo;
 - guarda la prediccion en Supabase.
 
+Si el job corre fuera de tu maquina, el `model_run` debe apuntar a un artefacto remoto:
+
+```bash
+python -m brain.upload_model_artifact --model-name extra_trees --model-version promoted_smoke_20260706
+```
+
+Esto sube el `.joblib` a Supabase Storage y actualiza `artifact_uri` a `supabase://model-artifacts/...`, que tambien puede resolver GitHub Actions.
+
 Puede filtrarse por version:
 
 ```bash

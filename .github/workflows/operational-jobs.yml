@@ -95,6 +95,7 @@ jobs:
             CMD+=(--skip-collection)
           fi
           "${CMD[@]}"
+          python -c "import json, sys; report=json.load(open('reports/market_data_job.json')); sys.exit(1 if report.get('failed', 0) else 0)"
 
       - name: Run inference job
         if: ${{ env.JOB_MODE == 'inference' || env.JOB_MODE == 'full' }}
@@ -108,6 +109,7 @@ jobs:
             CMD+=(--model-version "$MODEL_VERSION")
           fi
           "${CMD[@]}"
+          python -c "import json, sys; report=json.load(open('reports/inference_job_latest.json')); sys.exit(1 if report.get('failed', 0) else 0)"
 
       - name: Upload job reports
         if: always()

@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import argparse
 import json
-from pathlib import Path
 
 import joblib
 
+from brain.artifacts import resolve_model_artifact
 from brain.datasets import build_feature_frame_from_materialized
 from brain.features import feature_columns_for_set
 from brain.inference import PredictionPolicy, predict_actions
@@ -39,7 +39,7 @@ def main() -> None:
     if not artifact_uri:
         raise RuntimeError(f"Model run has no artifact_uri: {args.model_name}:{args.model_version}")
 
-    model = joblib.load(Path(artifact_uri))
+    model = joblib.load(resolve_model_artifact(str(artifact_uri)))
     feature_columns = feature_columns_for_set(model_run["feature_set"])
     feature_rows = repository.get_features(
         asset_id=asset_id,

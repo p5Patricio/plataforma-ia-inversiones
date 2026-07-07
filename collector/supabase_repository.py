@@ -325,6 +325,20 @@ class SupabaseRepository:
             params["model_version"] = f"eq.{model_version}"
         return self._get_rows("model_runs", params, limit=limit)
 
+    def update_model_run_artifact_uri(self, model_run_id: str, artifact_uri: str) -> dict[str, Any]:
+        response = self._session.patch(
+            f"{self.config.url}/rest/v1/model_runs",
+            headers=self.headers | {"Prefer": "return=representation"},
+            params={"id": f"eq.{model_run_id}"},
+            json={"artifact_uri": artifact_uri},
+            timeout=30,
+        )
+        response.raise_for_status()
+        data = response.json()
+        if not data:
+            raise RuntimeError(f"Supabase did not return updated model run: {model_run_id}")
+        return data[0]
+
     def upsert_predictions(
         self,
         asset_id: str,

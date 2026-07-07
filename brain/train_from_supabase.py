@@ -60,7 +60,7 @@ def main() -> None:
         args.model_out or f"models/{args.ticker.upper()}_{args.model_name}_{args.feature_set}_{args.model_version}.joblib"
     )
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(model, artifact_path)
+    joblib.dump(model, artifact_path, compress=3)
 
     metrics = {
         "ticker": args.ticker.upper(),

@@ -61,7 +61,7 @@ def main() -> None:
 
     model_out = Path(args.model_out)
     model_out.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(model, model_out)
+    joblib.dump(model, model_out, compress=3)
 
     metrics = {
         "model_name": args.model_name,

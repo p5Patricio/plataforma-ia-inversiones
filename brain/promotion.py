@@ -113,7 +113,7 @@ def promote_candidate_from_report(
 
     artifact_path = Path(artifact_uri)
     artifact_path.parent.mkdir(parents=True, exist_ok=True)
-    joblib.dump(model, artifact_path)
+    joblib.dump(model, artifact_path, compress=3)
 
     metrics = build_promotion_metrics(
         report=report,
