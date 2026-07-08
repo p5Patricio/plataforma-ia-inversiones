@@ -19,6 +19,7 @@ IA Inversiones ya cuenta con una base funcional para investigar, entrenar, evalu
 | Backtesting | Backtests persistidos y comparables por instrumento/modelo. |
 | Paper trading | Simulaciones persistidas con curva de equity, eventos y comparativo. |
 | Salud operativa | Endpoint y panel para verificar API, Supabase, esquema requerido y alertas por activo. |
+| Seguridad Supabase | RLS activado para tablas publicas de mercado/modelo, con lectura controlada y sin escrituras anonimas. |
 | Frontend | Dashboard React con senal, chart, riesgo, backtests, paper trading, feedback y estado del sistema. |
 | CI operativo | Workflow GitHub Actions para datos, inferencia, paper trading o corrida completa. |
 
@@ -41,7 +42,7 @@ IA Inversiones ya cuenta con una base funcional para investigar, entrenar, evalu
 - Medir retorno neto con fees, slippage, drawdown, exposicion y estabilidad, no solo accuracy.
 - Ampliar alertas con notificaciones externas para datos faltantes, inferencia fallida y degradacion de predicciones.
 - Integrar broker solo despues de validar controles de riesgo, limites por usuario y revision humana.
-- Mantener secretos fuera del repositorio y rotar credenciales si alguna vez fueron expuestas.
+- Mantener secretos fuera del repositorio, conservar RLS activo y rotar credenciales si alguna vez fueron expuestas.
 
 ## Comandos de Verificacion
 

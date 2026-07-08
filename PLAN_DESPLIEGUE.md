@@ -13,6 +13,7 @@ Este plan describe como llevar IA Inversiones desde el estado actual a una opera
 | Jobs operativos | GitHub Actions programado |
 | Secretos | GitHub Secrets y variables del proveedor de hosting |
 | Monitoreo inicial | `/api/health`, `/api/alerts/{ticker}` y artifacts JSON de GitHub Actions |
+| Seguridad de datos | RLS en Supabase, backend con clave server-side y frontend solo con anon key |
 
 ## 2. Fuentes de Datos
 
@@ -81,7 +82,13 @@ Bloque pendiente recomendado:
 - Agregar notificaciones externas para alertas criticas.
 - Agregar comparacion explicita contra el modelo promovido vigente antes de reemplazarlo.
 
-## 6. Variables de Produccion
+## 6. Seguridad Supabase
+
+La migracion `supabase/migrations/20260708000100_public_market_rls.sql` activa RLS para las tablas publicas de mercado, entrenamiento, predicciones, backtests y paper trading. Los clientes `anon` y `authenticated` solo reciben politicas de lectura; las escrituras operativas quedan reservadas para procesos server-side con `SUPABASE_KEY`.
+
+Despues de aplicarla, validar en Supabase que no queden avisos criticos de tablas publicas sin RLS y ejecutar `python -m collector.schema_check`.
+
+## 7. Variables de Produccion
 
 Backend:
 
@@ -101,7 +108,7 @@ VITE_SUPABASE_URL=...
 VITE_SUPABASE_ANON_KEY=...
 ```
 
-## 7. Pasos de Despliegue
+## 8. Pasos de Despliegue
 
 1. Confirmar migraciones aplicadas en Supabase.
 2. Crear bucket `model-artifacts` en Supabase Storage.
@@ -115,7 +122,7 @@ VITE_SUPABASE_ANON_KEY=...
 10. Ejecutar workflow `paper_trading`.
 11. Validar `/api/health`, `/api/alerts/BTC-USD` y dashboard.
 
-## 8. Criterios Antes de Dinero Real
+## 9. Criterios Antes de Dinero Real
 
 - Paper trading suficiente por activo.
 - Muestra minima de feedback evaluado.
