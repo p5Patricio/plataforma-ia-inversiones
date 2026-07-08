@@ -68,6 +68,7 @@ Secretos necesarios:
 ```text
 SUPABASE_URL
 SUPABASE_KEY
+OPERATIONAL_WEBHOOK_URL  # opcional
 ```
 
 El workflow ya soporta reentrenamiento controlado con:
@@ -75,12 +76,13 @@ El workflow ya soporta reentrenamiento controlado con:
 - `retraining`: evalua candidatos, promueve solo aprobados que mejoran al modelo vigente y sube artefactos.
 - `full_retrain`: actualiza datos, reentrena, ejecuta inferencia y guarda paper trading.
 - Reportes JSON como artifacts.
+- Notificacion opcional a webhook externo con resumen de errores, skips y resultados.
 - Fallo del workflow solo cuando hay errores tecnicos; si no hay candidato suficientemente bueno, el activo queda como `skipped`.
 
 Bloque pendiente recomendado:
 
 - Separar `full_retrain` en agenda semanal cuando haya suficiente muestra.
-- Agregar notificaciones externas para alertas criticas.
+- Conectar `OPERATIONAL_WEBHOOK_URL` a Slack, Discord, Teams o un endpoint propio.
 
 ## 6. Seguridad Supabase
 

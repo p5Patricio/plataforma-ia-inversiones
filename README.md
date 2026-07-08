@@ -295,6 +295,7 @@ Configura estos GitHub Secrets antes de activar el workflow:
 ```text
 SUPABASE_URL
 SUPABASE_KEY
+OPERATIONAL_WEBHOOK_URL  # opcional, para notificaciones externas
 ```
 
 El workflow corre con `APP_ENV=production` y `ALLOW_DEMO_FALLBACK=false`, por lo que falla rapido si Supabase o el esquema no estan disponibles. Los reportes JSON se suben como artifacts de la ejecucion, no se versionan en el repositorio.

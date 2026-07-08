@@ -190,3 +190,11 @@ jobs:
           name: operational-job-reports
           path: reports/*.json
           if-no-files-found: ignore
+
+      - name: Notify operational webhook
+        if: always()
+        env:
+          OPERATIONAL_WEBHOOK_URL: ${{ secrets.OPERATIONAL_WEBHOOK_URL }}
+          GITHUB_JOB_STATUS: ${{ job.status }}
+          GITHUB_RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python -m ops.notify_operational_job --reports-dir reports

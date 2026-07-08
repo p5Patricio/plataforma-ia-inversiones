@@ -20,6 +20,7 @@ IA Inversiones ya cuenta con una base funcional para investigar, entrenar, evalu
 | Paper trading | Simulaciones persistidas con curva de equity, eventos y comparativo. |
 | Salud operativa | Endpoint y panel para verificar API, Supabase, esquema requerido y alertas por activo. |
 | Seguridad Supabase | RLS activado para tablas publicas de mercado/modelo, con lectura controlada y sin escrituras anonimas. |
+| Notificaciones | Webhook operativo opcional desde GitHub Actions con resumen de reportes. |
 | Frontend | Dashboard React con senal, chart, riesgo, backtests, paper trading, feedback y estado del sistema. |
 | CI operativo | Workflow GitHub Actions para datos, inferencia, paper trading o corrida completa. |
 
