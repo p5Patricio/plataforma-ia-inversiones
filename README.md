@@ -282,7 +282,7 @@ python -m brain.run_inference_job --model-name extra_trees --model-version promo
 
 El repositorio incluye `.github/workflows/operational-jobs.yml` para ejecutar jobs desde GitHub Actions:
 
-- `schedule`: corre todos los dias a las 06:20 UTC y actualiza datos/features con `config/assets.core.json`.
+- `schedule`: corre todos los dias a las 06:20 UTC como ciclo `full` para actualizar datos, inferir y persistir paper trading; los domingos a las 06:40 UTC ejecuta `full_retrain`.
 - `workflow_dispatch`: permite lanzar `market_data`, `inference`, `paper_trading` o `full` manualmente.
 - `retraining`: evalua candidatos, promueve el mejor aprobado solo si mejora al vigente, sube el artefacto y guarda prediccion latest.
 - `full_retrain`: actualiza datos, reentrena/promueve, ejecuta inferencia y persiste paper trading.

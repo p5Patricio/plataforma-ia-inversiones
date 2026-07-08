@@ -29,14 +29,14 @@ El universo operativo inicial vive en `config/assets.core.json`.
 
 ## 3. Flujo Continuo
 
-1. GitHub Actions ejecuta `collector.run_market_data_job` diariamente.
+1. GitHub Actions ejecuta el ciclo diario `full`: datos, inferencia y paper trading.
 2. El job descarga precios, actualiza Supabase y materializa features/labels.
 3. El job de inferencia ejecuta `brain.run_inference_job` con los modelos promovidos.
 4. Las predicciones se guardan en Supabase.
 5. Cuando pasa el horizonte de prediccion, el feedback compara prediccion contra resultado observado.
 6. El job de paper trading simula la estrategia con predicciones reales guardadas.
 7. Las alertas operativas detectan datos atrasados, falta de prediccion, poco feedback o degradacion.
-8. Un job de reentrenamiento debe evaluar candidatos y promover solo modelos que mejoren al vigente.
+8. Un job semanal `full_retrain` evalua candidatos y promueve solo modelos que mejoren al vigente.
 
 ## 4. Reentrenamiento Controlado
 
@@ -61,6 +61,7 @@ El workflow actual `.github/workflows/operational-jobs.yml` ya cubre:
 - `inference`
 - `paper_trading`
 - `full`
+- `full_retrain` semanal
 
 Secretos necesarios:
 

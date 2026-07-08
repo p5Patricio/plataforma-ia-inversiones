@@ -2,7 +2,10 @@ name: Operational Jobs
 
 on:
   schedule:
+    # Daily operational cycle: data refresh, inference and paper trading.
     - cron: "20 6 * * *"
+    # Weekly controlled retraining cycle.
+    - cron: "40 6 * * 0"
   workflow_dispatch:
     inputs:
       job:
@@ -72,7 +75,7 @@ jobs:
       ALLOW_DEMO_FALLBACK: "false"
       SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
       SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
-      JOB_MODE: ${{ github.event_name == 'schedule' && 'market_data' || inputs.job }}
+      JOB_MODE: ${{ github.event_name == 'schedule' && (github.event.schedule == '40 6 * * 0' && 'full_retrain' || 'full') || inputs.job }}
       TICKERS: ${{ inputs.tickers || '' }}
       FEATURE_SETS: ${{ inputs.feature_sets || 'technical_v2' }}
       SKIP_COLLECTION: ${{ inputs.skip_collection || false }}
