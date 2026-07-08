@@ -71,7 +71,7 @@ SUPABASE_KEY
 
 El workflow ya soporta reentrenamiento controlado con:
 
-- `retraining`: evalua candidatos, promueve solo aprobados y sube artefactos.
+- `retraining`: evalua candidatos, promueve solo aprobados que mejoran al modelo vigente y sube artefactos.
 - `full_retrain`: actualiza datos, reentrena, ejecuta inferencia y guarda paper trading.
 - Reportes JSON como artifacts.
 - Fallo del workflow solo cuando hay errores tecnicos; si no hay candidato suficientemente bueno, el activo queda como `skipped`.
@@ -80,7 +80,6 @@ Bloque pendiente recomendado:
 
 - Separar `full_retrain` en agenda semanal cuando haya suficiente muestra.
 - Agregar notificaciones externas para alertas criticas.
-- Agregar comparacion explicita contra el modelo promovido vigente antes de reemplazarlo.
 
 ## 6. Seguridad Supabase
 

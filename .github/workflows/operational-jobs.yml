@@ -50,6 +50,15 @@ on:
         description: Training scopes for retraining
         required: false
         default: "local,asset_class,global"
+      require_incumbent_improvement:
+        description: Require retraining candidates to improve the promoted incumbent
+        required: false
+        default: true
+        type: boolean
+      min_objective_improvement:
+        description: Minimum objective-score margin over the incumbent
+        required: false
+        default: "0.0"
 
 permissions:
   contents: read
@@ -72,6 +81,8 @@ jobs:
       MODELS: ${{ inputs.models || 'logistic_regression,random_forest,extra_trees' }}
       CONFIDENCE_THRESHOLDS: ${{ inputs.confidence_thresholds || '0.55,0.60,0.65,0.70' }}
       SCOPES: ${{ inputs.scopes || 'local,asset_class,global' }}
+      REQUIRE_INCUMBENT_IMPROVEMENT: ${{ github.event_name == 'schedule' && 'true' || inputs.require_incumbent_improvement }}
+      MIN_OBJECTIVE_IMPROVEMENT: ${{ inputs.min_objective_improvement || '0.0' }}
 
     steps:
       - name: Checkout
@@ -126,8 +137,12 @@ jobs:
             --models "$MODELS"
             --confidence-thresholds "$CONFIDENCE_THRESHOLDS"
             --scopes "$SCOPES"
+            --min-objective-improvement "$MIN_OBJECTIVE_IMPROVEMENT"
             --out reports/retraining_job.json
           )
+          if [ "$REQUIRE_INCUMBENT_IMPROVEMENT" != "true" ]; then
+            CMD+=(--no-require-incumbent-improvement)
+          fi
           if [ -n "$TICKERS" ]; then
             CMD+=(--tickers "$TICKERS")
           fi

@@ -9,6 +9,7 @@ from brain.artifacts import DEFAULT_MODEL_ARTIFACT_BUCKET, upload_supabase_artif
 from brain.backtesting import BacktestConfig
 from brain.candidate_matrix import load_candidate_datasets_from_supabase, run_candidate_matrix
 from brain.features import feature_columns_for_set
+from brain.inference_job import is_promoted_model_run, target_ticker_for_model_run
 from brain.models import available_model_names
 from brain.promotion import default_promotion_version, promote_candidate_from_report, select_candidate
 from brain.risk import RiskPolicy
@@ -53,6 +54,9 @@ class RetrainingJobConfig:
     create_artifact_bucket: bool = True
     model_dir: str = "models"
     continue_on_error: bool = True
+    require_incumbent_improvement: bool = True
+    min_objective_improvement: float = 0.0
+    incumbent_lookup_limit: int = 100
 
 
 def run_retraining_job(
@@ -108,6 +112,35 @@ def run_retraining_job(
                 )
                 continue
 
+            incumbent = find_incumbent_model_run(
+                repository,
+                ticker=ticker,
+                feature_set=job_config.feature_set,
+                label_method=job_config.label_method,
+                horizon=job_config.horizon,
+                limit=job_config.incumbent_lookup_limit,
+            )
+            incumbent_comparison = compare_candidate_to_incumbent(
+                candidate,
+                incumbent,
+                min_objective_improvement=job_config.min_objective_improvement,
+            )
+            if job_config.require_incumbent_improvement and incumbent_comparison["status"] == "fail":
+                skipped.append(
+                    {
+                        **context,
+                        "reason": "candidate_not_better_than_incumbent",
+                        "detail": incumbent_comparison["reason"],
+                        "candidate_id": candidate.get("candidate_id"),
+                        "candidate_objective_score": incumbent_comparison.get("candidate_objective_score"),
+                        "incumbent_model_run_id": incumbent_comparison.get("incumbent_model_run_id"),
+                        "incumbent_objective_score": incumbent_comparison.get("incumbent_objective_score"),
+                        "required_objective_improvement": job_config.min_objective_improvement,
+                        "ranking_count": len(report.get("ranking") or []),
+                    }
+                )
+                continue
+
             model_version = build_model_version(ticker)
             artifact_path = build_artifact_path(ticker, candidate, report, model_version, job_config.model_dir)
             promotion = promote_candidate_from_report(
@@ -158,6 +191,7 @@ def run_retraining_job(
                     "artifact_uri": remote_artifact_uri or promotion.artifact_uri,
                     "prediction_loaded": bool(promotion.prediction),
                     "ranking_count": len(report.get("ranking") or []),
+                    "incumbent_comparison": incumbent_comparison,
                 }
             )
         except Exception as error:
@@ -254,6 +288,73 @@ def build_artifact_path(ticker: str, candidate: dict[str, Any], report: dict[str
     )
 
 
+def find_incumbent_model_run(
+    repository: SupabaseRepository,
+    *,
+    ticker: str,
+    feature_set: str,
+    label_method: str,
+    horizon: int,
+    limit: int = 100,
+) -> dict[str, Any] | None:
+    model_runs = repository.get_model_runs(limit=limit, ascending=False)
+    for model_run in model_runs:
+        if not is_promoted_model_run(model_run):
+            continue
+        if target_ticker_for_model_run(model_run, required=False) != ticker.upper():
+            continue
+        if model_run.get("feature_set") != feature_set:
+            continue
+        if model_run.get("label_method") != label_method:
+            continue
+        if int(model_run.get("horizon") or 0) != int(horizon):
+            continue
+        return model_run
+    return None
+
+
+def compare_candidate_to_incumbent(
+    candidate: dict[str, Any],
+    incumbent: dict[str, Any] | None,
+    *,
+    min_objective_improvement: float = 0.0,
+) -> dict[str, Any]:
+    candidate_score = _optional_float(candidate.get("objective_score"))
+    if incumbent is None:
+        return {
+            "status": "pass",
+            "reason": "no_incumbent",
+            "candidate_objective_score": candidate_score,
+            "incumbent_model_run_id": None,
+            "incumbent_objective_score": None,
+        }
+
+    incumbent_candidate = ((incumbent.get("metrics") or {}).get("promotion") or {}).get("candidate") or {}
+    incumbent_score = _optional_float(incumbent_candidate.get("objective_score"))
+    comparison = {
+        "candidate_objective_score": candidate_score,
+        "incumbent_model_run_id": incumbent.get("id"),
+        "incumbent_model_name": incumbent.get("model_name"),
+        "incumbent_model_version": incumbent.get("model_version"),
+        "incumbent_candidate_id": incumbent_candidate.get("candidate_id"),
+        "incumbent_objective_score": incumbent_score,
+        "required_objective_improvement": min_objective_improvement,
+    }
+    if candidate_score is None:
+        return {**comparison, "status": "fail", "reason": "candidate_missing_objective_score"}
+    if incumbent_score is None:
+        return {**comparison, "status": "pass", "reason": "incumbent_missing_objective_score"}
+    if candidate_score > incumbent_score + min_objective_improvement:
+        return {**comparison, "status": "pass", "reason": "candidate_improves_incumbent"}
+    return {**comparison, "status": "fail", "reason": "candidate_does_not_improve_incumbent"}
+
+
+def _optional_float(value: Any) -> float | None:
+    if value is None:
+        return None
+    return float(value)
+
+
 def summarize_config(config: RetrainingJobConfig) -> dict[str, Any]:
     return {
         "feature_set": config.feature_set,
@@ -270,4 +371,7 @@ def summarize_config(config: RetrainingJobConfig) -> dict[str, Any]:
         "min_active_trades": config.min_active_trades,
         "upload_artifacts": config.upload_artifacts,
         "artifact_bucket": config.artifact_bucket,
+        "require_incumbent_improvement": config.require_incumbent_improvement,
+        "min_objective_improvement": config.min_objective_improvement,
+        "incumbent_lookup_limit": config.incumbent_lookup_limit,
     }

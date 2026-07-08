@@ -21,7 +21,7 @@ from brain.labeling import BUY, HOLD, SELL, fixed_horizon_labels, triple_barrier
 from brain.models import available_model_names, create_model, walk_forward_evaluate
 from brain.promotion import build_promoted_training_frame, select_candidate
 from brain.risk import RiskPolicy, apply_risk_policy
-from brain.retraining_job import RetrainingJobConfig, run_retraining_job
+from brain.retraining_job import RetrainingJobConfig, compare_candidate_to_incumbent, run_retraining_job
 from brain.scoped_evaluation import AssetDataset, run_scoped_walk_forward_backtest
 from brain.selection import PromotionCriteria, evaluate_promotion, rank_candidate_summaries, score_candidate
 from collector.supabase_repository import SupabaseConfig
@@ -695,12 +695,17 @@ def test_build_promoted_training_frame_uses_candidate_scope() -> None:
 
 
 class FakeRetrainingRepository:
-    def __init__(self) -> None:
+    def __init__(self, model_runs: list[dict] | None = None) -> None:
         self.updated_artifacts: list[tuple[str, str]] = []
+        self.model_runs = model_runs or []
 
     def update_model_run_artifact_uri(self, model_run_id: str, artifact_uri: str) -> dict:
         self.updated_artifacts.append((model_run_id, artifact_uri))
         return {"id": model_run_id, "artifact_uri": artifact_uri}
+
+    def get_model_runs(self, **kwargs):
+        self.model_run_kwargs = kwargs
+        return self.model_runs
 
 
 def test_run_retraining_job_promotes_and_uploads_candidate(monkeypatch, tmp_path) -> None:
@@ -764,7 +769,81 @@ def test_run_retraining_job_promotes_and_uploads_candidate(monkeypatch, tmp_path
     assert result["failed"] == 0
     assert result["results"][0]["model_run_id"] == "run-1"
     assert result["results"][0]["artifact_uri"] == "supabase://model-artifacts/models/model.joblib"
+    assert result["results"][0]["incumbent_comparison"]["reason"] == "no_incumbent"
     assert repository.updated_artifacts == [("run-1", "supabase://model-artifacts/models/model.joblib")]
+
+
+def test_run_retraining_job_skips_candidate_that_does_not_improve_incumbent(monkeypatch) -> None:
+    target = AssetDataset(
+        asset_id="btc-id",
+        ticker="BTC-USD",
+        asset_class="crypto",
+        dataset=pd.DataFrame({"timestamp": pd.date_range("2024-01-01", periods=3, freq="D", tz="UTC")}),
+    )
+    candidate = {
+        "candidate_id": "BTC-USD::extra_trees::confidence_0.6500::local",
+        "promotion": {"status": "pass"},
+        "model_name": "extra_trees",
+        "scope": "local",
+        "target_ticker": "BTC-USD",
+        "min_confidence": 0.65,
+        "objective_score": 0.42,
+    }
+    incumbent = {
+        "id": "run-incumbent",
+        "model_name": "extra_trees",
+        "model_version": "v1",
+        "feature_set": "technical_v2",
+        "label_method": "triple_barrier",
+        "horizon": 5,
+        "params": {"source": "candidate_matrix_promotion", "target_ticker": "BTC-USD"},
+        "metrics": {"promotion": {"candidate": {"candidate_id": "old", "objective_score": 0.50}}},
+    }
+
+    monkeypatch.setattr("brain.retraining_job.load_candidate_datasets_from_supabase", lambda *args, **kwargs: ([target], []))
+    monkeypatch.setattr(
+        "brain.retraining_job.run_candidate_matrix",
+        lambda *args, **kwargs: {"results": [], "ranking": [candidate], "errors": []},
+    )
+
+    def fail_if_promoted(**kwargs):
+        raise AssertionError("Candidate should not be promoted")
+
+    monkeypatch.setattr("brain.retraining_job.promote_candidate_from_report", fail_if_promoted)
+
+    result = run_retraining_job(
+        repository=FakeRetrainingRepository([incumbent]),
+        supabase_config=SupabaseConfig(url="https://example.supabase.co", key="key"),
+        tickers=["BTC-USD"],
+        config=RetrainingJobConfig(
+            model_names=["extra_trees"],
+            confidence_thresholds=[0.65],
+            scopes=["local"],
+            upload_artifacts=False,
+            min_active_trades=1,
+        ),
+    )
+
+    assert result["attempted"] == 1
+    assert result["succeeded"] == 0
+    assert result["failed"] == 0
+    assert result["skipped"][0]["reason"] == "candidate_not_better_than_incumbent"
+    assert result["skipped"][0]["incumbent_model_run_id"] == "run-incumbent"
+
+
+def test_compare_candidate_to_incumbent_allows_real_improvement() -> None:
+    candidate = {"candidate_id": "new", "objective_score": 0.56}
+    incumbent = {
+        "id": "run-old",
+        "model_name": "extra_trees",
+        "model_version": "v1",
+        "metrics": {"promotion": {"candidate": {"candidate_id": "old", "objective_score": 0.50}}},
+    }
+
+    comparison = compare_candidate_to_incumbent(candidate, incumbent, min_objective_improvement=0.01)
+
+    assert comparison["status"] == "pass"
+    assert comparison["reason"] == "candidate_improves_incumbent"
 
 
 def test_run_retraining_job_skips_when_no_candidate_passes(monkeypatch) -> None:

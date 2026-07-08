@@ -48,6 +48,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--artifact-bucket", default=DEFAULT_MODEL_ARTIFACT_BUCKET)
     parser.add_argument("--no-create-artifact-bucket", action="store_true")
     parser.add_argument("--model-dir", default="models")
+    parser.add_argument("--no-require-incumbent-improvement", action="store_true")
+    parser.add_argument("--min-objective-improvement", type=float, default=0.0)
+    parser.add_argument("--incumbent-lookup-limit", type=int, default=100)
     parser.add_argument("--fail-fast", action="store_true")
     parser.add_argument("--out", help="Optional JSON report path")
     return parser.parse_args()
@@ -95,6 +98,9 @@ def main() -> None:
             artifact_bucket=args.artifact_bucket,
             create_artifact_bucket=not args.no_create_artifact_bucket,
             model_dir=args.model_dir,
+            require_incumbent_improvement=not args.no_require_incumbent_improvement,
+            min_objective_improvement=args.min_objective_improvement,
+            incumbent_lookup_limit=args.incumbent_lookup_limit,
             continue_on_error=not args.fail_fast,
         ),
     )

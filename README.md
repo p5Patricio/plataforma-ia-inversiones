@@ -262,6 +262,8 @@ python -m brain.run_retraining_job --tickers BTC-USD --models logistic_regressio
 
 El job de reentrenamiento no promueve por inercia. Si ningun candidato supera los criterios de retorno, profit factor, drawdown, numero minimo de operaciones y ventaja contra no operar, el ticker queda como `skipped` con razon `no_promotable_candidate`.
 
+Cuando ya existe un modelo promovido para el mismo ticker, `feature_set`, `label_method` y horizonte, el candidato tambien debe mejorar su `objective_score`. Si no lo supera, el ticker queda como `skipped` con razon `candidate_not_better_than_incumbent`. Para experimentos controlados puedes usar `--no-require-incumbent-improvement`; para exigir margen adicional, usa `--min-objective-improvement 0.01`.
+
 Si el job corre fuera de tu maquina, el `model_run` debe apuntar a un artefacto remoto:
 
 ```bash
@@ -282,7 +284,7 @@ El repositorio incluye `.github/workflows/operational-jobs.yml` para ejecutar jo
 
 - `schedule`: corre todos los dias a las 06:20 UTC y actualiza datos/features con `config/assets.core.json`.
 - `workflow_dispatch`: permite lanzar `market_data`, `inference`, `paper_trading` o `full` manualmente.
-- `retraining`: evalua candidatos, promueve el mejor aprobado, sube el artefacto y guarda prediccion latest.
+- `retraining`: evalua candidatos, promueve el mejor aprobado solo si mejora al vigente, sube el artefacto y guarda prediccion latest.
 - `full_retrain`: actualiza datos, reentrena/promueve, ejecuta inferencia y persiste paper trading.
 - `tickers`: permite limitar una corrida a instrumentos concretos, por ejemplo `BTC-USD,AAPL`.
 - `skip_collection`: materializa features y labels usando precios ya guardados.
