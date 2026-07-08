@@ -12,6 +12,7 @@ IA Inversiones ya cuenta con una base funcional para investigar, entrenar, evalu
 | Datasets ML | Materializacion de features tecnicos y labels por activo. |
 | Entrenamiento | Modelos candidatos, evaluacion walk-forward, scopes globales y por activo. |
 | Promocion | Seleccion de candidatos y registro de `model_runs` versionados. |
+| Reentrenamiento | Job operativo para evaluar candidatos, promover modelos aprobados y subir artefactos. |
 | Inferencia | Job operativo para generar predicciones latest desde modelos promovidos. |
 | Riesgo | Motor de riesgo con perfiles default, por clase de activo y por ticker. |
 | Feedback | Evaluacion de predicciones previas contra retornos observados. |

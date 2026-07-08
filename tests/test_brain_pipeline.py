@@ -21,8 +21,10 @@ from brain.labeling import BUY, HOLD, SELL, fixed_horizon_labels, triple_barrier
 from brain.models import available_model_names, create_model, walk_forward_evaluate
 from brain.promotion import build_promoted_training_frame, select_candidate
 from brain.risk import RiskPolicy, apply_risk_policy
+from brain.retraining_job import RetrainingJobConfig, run_retraining_job
 from brain.scoped_evaluation import AssetDataset, run_scoped_walk_forward_backtest
 from brain.selection import PromotionCriteria, evaluate_promotion, rank_candidate_summaries, score_candidate
+from collector.supabase_repository import SupabaseConfig
 
 
 def make_prices(rows: int = 120) -> pd.DataFrame:
@@ -690,6 +692,115 @@ def test_build_promoted_training_frame_uses_candidate_scope() -> None:
 
     assert set(frame["ticker"]) == {"BTC-USD", "ETH-USD"}
     assert {asset["ticker"] for asset in assets} == {"BTC-USD", "ETH-USD"}
+
+
+class FakeRetrainingRepository:
+    def __init__(self) -> None:
+        self.updated_artifacts: list[tuple[str, str]] = []
+
+    def update_model_run_artifact_uri(self, model_run_id: str, artifact_uri: str) -> dict:
+        self.updated_artifacts.append((model_run_id, artifact_uri))
+        return {"id": model_run_id, "artifact_uri": artifact_uri}
+
+
+def test_run_retraining_job_promotes_and_uploads_candidate(monkeypatch, tmp_path) -> None:
+    target = AssetDataset(
+        asset_id="btc-id",
+        ticker="BTC-USD",
+        asset_class="crypto",
+        dataset=pd.DataFrame({"timestamp": pd.date_range("2024-01-01", periods=3, freq="D", tz="UTC")}),
+    )
+    candidate = {
+        "candidate_id": "BTC-USD::extra_trees::confidence_0.6500::local",
+        "promotion": {"status": "pass"},
+        "model_name": "extra_trees",
+        "scope": "local",
+        "target_ticker": "BTC-USD",
+        "min_confidence": 0.65,
+        "objective_score": 0.42,
+    }
+    artifact_path = tmp_path / "model.joblib"
+
+    monkeypatch.setattr("brain.retraining_job.load_candidate_datasets_from_supabase", lambda *args, **kwargs: ([target], []))
+    monkeypatch.setattr(
+        "brain.retraining_job.run_candidate_matrix",
+        lambda *args, **kwargs: {"results": [], "ranking": [candidate], "errors": []},
+    )
+
+    def fake_promote_candidate_from_report(**kwargs):
+        artifact_path.write_bytes(b"model")
+        from brain.promotion import PromotionResult
+
+        return PromotionResult(
+            candidate=kwargs["candidate"],
+            model_run_id="run-1",
+            artifact_uri=str(artifact_path),
+            metrics={},
+            prediction={"predictions_loaded": 1},
+        )
+
+    monkeypatch.setattr("brain.retraining_job.promote_candidate_from_report", fake_promote_candidate_from_report)
+    monkeypatch.setattr(
+        "brain.retraining_job.upload_supabase_artifact",
+        lambda *args, **kwargs: "supabase://model-artifacts/models/model.joblib",
+    )
+    repository = FakeRetrainingRepository()
+
+    result = run_retraining_job(
+        repository=repository,
+        supabase_config=SupabaseConfig(url="https://example.supabase.co", key="key"),
+        tickers=["BTC-USD"],
+        config=RetrainingJobConfig(
+            model_names=["extra_trees"],
+            confidence_thresholds=[0.65],
+            scopes=["local"],
+            upload_artifacts=True,
+            min_active_trades=1,
+        ),
+    )
+
+    assert result["attempted"] == 1
+    assert result["succeeded"] == 1
+    assert result["failed"] == 0
+    assert result["results"][0]["model_run_id"] == "run-1"
+    assert result["results"][0]["artifact_uri"] == "supabase://model-artifacts/models/model.joblib"
+    assert repository.updated_artifacts == [("run-1", "supabase://model-artifacts/models/model.joblib")]
+
+
+def test_run_retraining_job_skips_when_no_candidate_passes(monkeypatch) -> None:
+    target = AssetDataset(
+        asset_id="btc-id",
+        ticker="BTC-USD",
+        asset_class="crypto",
+        dataset=pd.DataFrame({"timestamp": pd.date_range("2024-01-01", periods=3, freq="D", tz="UTC")}),
+    )
+
+    monkeypatch.setattr("brain.retraining_job.load_candidate_datasets_from_supabase", lambda *args, **kwargs: ([target], []))
+    monkeypatch.setattr(
+        "brain.retraining_job.run_candidate_matrix",
+        lambda *args, **kwargs: {
+            "results": [],
+            "ranking": [{"candidate_id": "weak", "promotion": {"status": "fail"}, "objective_score": 0.1}],
+            "errors": [],
+        },
+    )
+
+    result = run_retraining_job(
+        repository=FakeRetrainingRepository(),
+        supabase_config=SupabaseConfig(url="https://example.supabase.co", key="key"),
+        tickers=["BTC-USD"],
+        config=RetrainingJobConfig(
+            model_names=["extra_trees"],
+            confidence_thresholds=[0.65],
+            scopes=["local"],
+            upload_artifacts=False,
+        ),
+    )
+
+    assert result["attempted"] == 1
+    assert result["succeeded"] == 0
+    assert result["failed"] == 0
+    assert result["skipped"][0]["reason"] == "no_promotable_candidate"
 
 
 def test_apply_risk_policy_sizes_confident_trade() -> None:

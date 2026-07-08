@@ -254,6 +254,14 @@ El job:
 
 El job de paper trading persiste simulaciones de las predicciones guardadas en `paper_trading_runs` y `paper_trading_events`, y alimenta el comparativo del dashboard.
 
+Para evaluar candidatos, promover el mejor modelo aprobado, subir su artefacto a Supabase Storage y guardar una prediccion latest:
+
+```bash
+python -m brain.run_retraining_job --tickers BTC-USD --models logistic_regression,random_forest,extra_trees --confidence-thresholds 0.55,0.60,0.65,0.70 --scopes local,asset_class,global --out reports/retraining_job.json
+```
+
+El job de reentrenamiento no promueve por inercia. Si ningun candidato supera los criterios de retorno, profit factor, drawdown, numero minimo de operaciones y ventaja contra no operar, el ticker queda como `skipped` con razon `no_promotable_candidate`.
+
 Si el job corre fuera de tu maquina, el `model_run` debe apuntar a un artefacto remoto:
 
 ```bash
@@ -274,8 +282,11 @@ El repositorio incluye `.github/workflows/operational-jobs.yml` para ejecutar jo
 
 - `schedule`: corre todos los dias a las 06:20 UTC y actualiza datos/features con `config/assets.core.json`.
 - `workflow_dispatch`: permite lanzar `market_data`, `inference`, `paper_trading` o `full` manualmente.
+- `retraining`: evalua candidatos, promueve el mejor aprobado, sube el artefacto y guarda prediccion latest.
+- `full_retrain`: actualiza datos, reentrena/promueve, ejecuta inferencia y persiste paper trading.
 - `tickers`: permite limitar una corrida a instrumentos concretos, por ejemplo `BTC-USD,AAPL`.
 - `skip_collection`: materializa features y labels usando precios ya guardados.
+- `models`, `confidence_thresholds` y `scopes`: controlan la matriz de candidatos del reentrenamiento.
 
 Configura estos GitHub Secrets antes de activar el workflow:
 
