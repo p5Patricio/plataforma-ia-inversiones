@@ -55,7 +55,12 @@ flowchart LR
 | `supabase/migrations/` | Esquema SQL para datos, modelos, predicciones y feedback. |
 | `ui/` | Frontend React + Vite + Tailwind. |
 | `tests/` | Pruebas automatizadas del sistema. |
+| `openspec/` | SDD/OpenSpec para cambios profesionales y requisitos activos. |
+| `CONTRIBUTING.md` | Guia para contribuir, verificar y trabajar sin filtrar secretos. |
+| `SECURITY.md` | Politica de seguridad, reporte privado y rotacion de credenciales. |
+| `CHANGELOG.md` | Historial de cambios relevantes. |
 | `INVESTIGACION_MODELO_PREDICTIVO.md` | Guia de investigacion y hoja de ruta tecnica. |
+| `PLAN_MEJORAS_PROFESIONALES.md` | Roadmap profesional por bloques. |
 
 ## Configuracion
 
@@ -149,6 +154,14 @@ python -m collector.schema_check
 Si falta alguna relacion, aplica las migraciones pendientes de `supabase/migrations/` desde Supabase SQL Editor o Supabase CLI y vuelve a ejecutar el chequeo.
 
 Si falla DNS o red en desarrollo, la API activa el modo demo local para que el dashboard siga siendo navegable. En produccion, deja `ALLOW_DEMO_FALLBACK=false` para que los fallos de datos se reporten como errores reales en lugar de mostrarse como lecturas sinteticas.
+
+## Contribucion y Seguridad
+
+Antes de abrir cambios revisa:
+
+- `CONTRIBUTING.md` para flujo local, comandos de verificacion y SDD.
+- `SECURITY.md` para manejo de secretos, RLS y rotacion de credenciales.
+- `CHANGELOG.md` para registrar cambios relevantes.
 
 ## Flujo de Trabajo del Modelo
 

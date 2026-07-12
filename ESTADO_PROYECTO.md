@@ -1,6 +1,6 @@
 # Estado del Proyecto
 
-Ultima revision operativa: 2026-07-07.
+Ultima revision operativa: 2026-07-12.
 
 IA Inversiones ya cuenta con una base funcional para investigar, entrenar, evaluar y monitorear modelos de decision de inversion. El sistema no promete precision perfecta ni debe operar capital real sin una etapa prolongada de validacion; esta construido para maximizar evidencia, trazabilidad y control de riesgo antes de tomar decisiones.
 
@@ -21,6 +21,7 @@ IA Inversiones ya cuenta con una base funcional para investigar, entrenar, evalu
 | Salud operativa | Endpoint y panel para verificar API, Supabase, esquema requerido y alertas por activo. |
 | Seguridad Supabase | RLS activado para tablas publicas de mercado/modelo, con lectura controlada y sin escrituras anonimas. |
 | Notificaciones | Webhook operativo opcional desde GitHub Actions con resumen de reportes. |
+| SDD | OpenSpec inicializado para planificar mejoras profesionales por bloques. |
 | Frontend | Dashboard React con senal, chart, riesgo, backtests, paper trading, feedback y estado del sistema. |
 | CI operativo | Workflow GitHub Actions para datos, inferencia, paper trading o corrida completa. |
 
