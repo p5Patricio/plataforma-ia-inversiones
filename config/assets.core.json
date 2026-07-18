@@ -1,7 +1,7 @@
 [
   {
-    "provider": "binance",
-    "ticker": "BTCUSDT",
+    "provider": "yfinance",
+    "ticker": "BTC-USD",
     "asset_ticker": "BTC-USD",
     "name": "Bitcoin",
     "asset_class": "crypto",
@@ -9,8 +9,8 @@
     "start": "2020-01-01"
   },
   {
-    "provider": "binance",
-    "ticker": "ETHUSDT",
+    "provider": "yfinance",
+    "ticker": "ETH-USD",
     "asset_ticker": "ETH-USD",
     "name": "Ethereum",
     "asset_class": "crypto",
