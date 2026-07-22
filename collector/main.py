@@ -32,10 +32,10 @@ class AssetCollectionResult:
 
 DEFAULT_ASSETS = [
     AssetCollectionConfig(
-        provider="binance",
-        ticker="BTCUSDT",
-        asset_ticker="BTCUSDT",
-        name="Bitcoin / Tether",
+        provider="yfinance",
+        ticker="BTC-USD",
+        asset_ticker="BTC-USD",
+        name="Bitcoin",
         asset_class="crypto",
         start="2020-01-01",
     ),

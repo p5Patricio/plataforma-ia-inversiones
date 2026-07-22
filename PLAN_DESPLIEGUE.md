@@ -81,7 +81,6 @@ El workflow ya soporta reentrenamiento controlado con:
 
 Bloque pendiente recomendado:
 
-- Separar `full_retrain` en agenda semanal cuando haya suficiente muestra.
 - Conectar `OPERATIONAL_WEBHOOK_URL` a Slack, Discord, Teams o un endpoint propio.
 
 ## 6. Seguridad Supabase

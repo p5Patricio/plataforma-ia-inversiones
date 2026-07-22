@@ -1,0 +1,33 @@
+schema: spec-driven
+
+context: |
+  Tech stack: Python FastAPI backend, Supabase Postgres/Storage, React/Vite frontend, GitHub Actions jobs.
+  Architecture: collector ingests market data, brain trains/evaluates/predicts, API serves dashboard data, UI renders operational console.
+  Testing: pytest for Python, npm lint/build for frontend, operational workflow for Supabase-connected jobs.
+  Style: small Python modules, explicit CLI scripts, Markdown operational docs, SQL migrations under supabase/migrations.
+
+testing:
+  strict_tdd: false
+  python_test_command: py -3.14 -m pytest
+  schema_check_command: py -3.14 -m collector.schema_check
+  frontend_lint_command: cd ui && npm run lint
+  frontend_build_command: cd ui && npm run build
+
+rules:
+  proposal:
+    - Include rollback plan for risky changes.
+  specs:
+    - Use Given/When/Then for scenarios.
+    - Use RFC 2119 keywords.
+  design:
+    - Include concrete file paths.
+    - Document why each CI/security workflow exists.
+  tasks:
+    - Group by reviewable work units.
+    - Keep implementation slices under the 400-line review budget where possible.
+  apply:
+    - Follow existing code and documentation patterns.
+  verify:
+    test_command: py -3.14 -m pytest
+    build_command: cd ui && npm run build
+    coverage_threshold: 0
